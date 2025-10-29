@@ -1,8 +1,614 @@
 ---
 title: Scaffolds Overview
-description: Documentation coming soon
+description: Persistent agent memory and capabilities through dynamic context components
 ---
 
 # Scaffolds Overview
 
-[Content coming soon]
+**Scaffolds** are Egregore's system for persistent agent memory and capabilities. They're dynamic components that automatically render into context, provide tool operations, and maintain state across interactions.
+
+## What are Scaffolds?
+
+Think of scaffolds as **persistent plugins** for your agent that:
+
+- **Maintain state** - Remember information across conversations
+- **Provide tools** - Expose operations the agent can use
+- **React to changes** - Automatically update when context changes
+- **Communicate** - Share state through formal IPC system
+
+<Info>
+  Scaffolds are like "smart memory" - they observe context, maintain persistent state, and provide capabilities the agent can access.
+</Info>
+
+## The Scaffold Pattern
+
+Traditional approaches require manual state management:
+
+```python
+# Manual state management - fragile
+notes = []
+
+def add_note(note: str):
+    global notes
+    notes.append(note)
+    # Manually insert into context
+    agent.context.pact_insert("d0, 1, 0", TextContent(f"Notes: {notes}"))
+```
+
+**Scaffolds solve this** with automatic state management:
+
+```python
+# Scaffold - automatic and persistent
+agent = Agent(provider="openai:gpt-4", enable_scaffolds=True)
+
+agent.call("Remember: user prefers Python")
+# InternalNotesScaffold automatically:
+# 1. Captures the note
+# 2. Stores it in persistent state
+# 3. Renders it into context
+# 4. Provides tools for retrieval
+
+# Later...
+agent.call("What do I prefer?")
+# Agent has access to all notes automatically
+```
+
+## Built-in Scaffolds
+
+Egregore includes three powerful built-in scaffolds:
+
+### 1. InternalNotesScaffold
+
+Automatic note-taking and memory:
+
+```python
+agent = Agent(provider="openai:gpt-4", enable_scaffolds=True)
+
+# Agent automatically captures important information
+agent.call("My API key is sk-abc123")
+agent.call("I prefer dark mode")
+agent.call("My email is alice@example.com")
+
+# Access notes
+notes = agent.scaffolds["notes"]
+print(notes.state.notes)
+# ["API key: sk-abc123", "Preference: dark mode", "Email: alice@example.com"]
+
+# Agent can recall notes
+agent.call("What's my email?")
+# "Your email is alice@example.com"
+```
+
+**Features:**
+- Automatic note capture
+- Persistent storage across sessions
+- Search and retrieval operations
+- Category organization
+
+### 2. FileManager
+
+Track file operations and maintain file system context:
+
+```python
+agent = Agent(provider="openai:gpt-4", enable_scaffolds=True)
+
+# Scaffold tracks file operations
+agent.call("Read config.json")
+agent.call("Write to output.txt")
+
+# Access file history
+files = agent.scaffolds["files"]
+print(files.state.recent_files)
+# ["config.json", "output.txt"]
+
+# Scaffold provides context about files
+agent.call("What files did I work with?")
+# "You read config.json and wrote to output.txt"
+```
+
+**Features:**
+- File operation tracking
+- Working directory awareness
+- Recent file history
+- File relationship mapping
+
+### 3. ShellScaffold
+
+Command execution history and environment tracking:
+
+```python
+agent = Agent(provider="openai:gpt-4", enable_scaffolds=True)
+
+# Scaffold tracks commands
+agent.call("Run: npm install")
+agent.call("Execute: pytest")
+
+# Access command history
+shell = agent.scaffolds["shell"]
+print(shell.state.command_history)
+# [("npm install", "success"), ("pytest", "success")]
+
+# Scaffold provides execution context
+agent.call("What commands did I run?")
+# "You ran npm install and pytest, both successful"
+```
+
+**Features:**
+- Command history tracking
+- Exit code monitoring
+- Environment variable awareness
+- Working directory tracking
+
+<Card title="Learn More" icon="layer-group" href="/features/scaffolds/builtin-scaffolds">
+  Complete guide to built-in scaffolds
+</Card>
+
+## Core Concepts
+
+### Scaffold State
+
+Each scaffold maintains persistent state:
+
+```python
+from egregore.core.context_scaffolds.base import BaseContextScaffold
+from pydantic import BaseModel
+
+class TaskState(BaseModel):
+    tasks: list[str] = []
+    completed: list[str] = []
+
+class TaskScaffold(BaseContextScaffold):
+    scaffold_type = "tasks"
+    state_model = TaskState
+
+    def render(self):
+        # Render current state into context
+        return TextContent(
+            content=f"Active: {len(self.state.tasks)}, Completed: {len(self.state.completed)}",
+            key="task_summary"
+        )
+```
+
+**State characteristics:**
+- Type-safe with Pydantic models
+- Persistent across interactions
+- Accessible to other scaffolds
+- Survives agent restarts (if serialized)
+
+### Operations
+
+Scaffolds expose operations as tools:
+
+```python
+class TaskScaffold(BaseContextScaffold):
+    scaffold_type = "tasks"
+
+    @operation
+    def add_task(self, task: str) -> str:
+        """Add a new task."""
+        self.state.tasks.append(task)
+        return f"Added: {task}"
+
+    @operation
+    def complete_task(self, task: str) -> str:
+        """Mark task as completed."""
+        self.state.tasks.remove(task)
+        self.state.completed.append(task)
+        return f"Completed: {task}"
+
+# Agent can use scaffold operations
+agent = Agent(provider="openai:gpt-4", scaffolds=[TaskScaffold])
+agent.call("Add task: write documentation")
+# Scaffold's add_task() called automatically
+```
+
+**Operation features:**
+- Automatic tool generation
+- Type safety from annotations
+- Return values sent to agent
+- State changes trigger re-rendering
+
+<Card title="Learn More" icon="screwdriver-wrench" href="/api-reference/scaffolds/operation-decorator">
+  Complete @operation decorator documentation
+</Card>
+
+### Reactive Rendering
+
+Scaffolds automatically re-render when context changes:
+
+```python
+class SmartScaffold(BaseContextScaffold):
+    scaffold_type = "smart"
+    _reactive = True  # Default: True
+
+    def render(self):
+        # Called automatically when context changes
+        episode = self.agent.context.current_episode
+        return TextContent(
+            content=f"Current episode: {episode}",
+            key="episode_tracker"
+        )
+
+    def should_rerender(self, ctx: ContextExecContext) -> bool:
+        # Optional: control when to re-render
+        return ctx.operation_type == "insert"  # Only on insertions
+```
+
+**Reactive features:**
+- Automatic re-rendering on context changes
+- Selective re-rendering via `should_rerender()`
+- Minimal performance overhead
+- All scaffolds reactive by default
+
+### Scaffold IPC
+
+Scaffolds communicate through formal IPC:
+
+```python
+class AnalyzerScaffold(BaseContextScaffold):
+    scaffold_type = "analyzer"
+
+    def render(self):
+        # Read state from another scaffold
+        notes = self.agent.scaffolds["notes"]
+        note_count = len(notes.state.notes)
+
+        # Write state for other scaffolds
+        self.agent.state.set("analysis_status", "active", source="analyzer")
+
+        return TextContent(
+            content=f"Analyzed {note_count} notes",
+            key="analysis"
+        )
+```
+
+<Card title="Learn More" icon="share-nodes" href="/features/scaffolds/scaffold-ipc">
+  Complete scaffold IPC documentation
+</Card>
+
+## Scaffold Lifecycle
+
+### Registration
+
+Scaffolds are registered when creating an agent:
+
+```python
+# Built-in scaffolds
+agent = Agent(provider="openai:gpt-4", enable_scaffolds=True)
+
+# Custom scaffolds
+agent = Agent(
+    provider="openai:gpt-4",
+    scaffolds=[TaskScaffold, NotesScaffold]
+)
+
+# Access scaffolds
+task_scaffold = agent.scaffolds["tasks"]
+notes_scaffold = agent.scaffolds["notes"]
+```
+
+### Initialization
+
+Scaffolds initialize when first accessed:
+
+```python
+class InitScaffold(BaseContextScaffold):
+    scaffold_type = "init"
+
+    def __init__(self, agent):
+        super().__init__(agent)
+        # Initialize state
+        self.data = []
+        # Setup connections
+        self.setup_monitoring()
+```
+
+### Rendering
+
+Scaffolds render into context automatically:
+
+```python
+class StatusScaffold(BaseContextScaffold):
+    scaffold_type = "status"
+
+    def render(self):
+        # Return None to skip rendering
+        if not self.should_render():
+            return None
+
+        # Return component to render
+        return TextContent(
+            content="Status: active",
+            key="status",
+            ttl=1,      # Expires after 1 turn
+            cadence=1   # Re-renders each turn (sticky)
+        )
+```
+
+**Rendering triggers:**
+- Initial agent creation
+- Context changes (if reactive)
+- Manual `scaffold.render()` call
+- State changes via operations
+
+### State Persistence
+
+Scaffold state can be serialized:
+
+```python
+import json
+
+# Save scaffold state
+state_data = agent.scaffolds["tasks"].state.model_dump()
+with open("task_state.json", "w") as f:
+    json.dump(state_data, f)
+
+# Restore scaffold state
+with open("task_state.json", "r") as f:
+    state_data = json.load(f)
+
+task_scaffold = agent.scaffolds["tasks"]
+task_scaffold.state = TaskState(**state_data)
+```
+
+## Use Cases
+
+### 1. User Preferences
+
+```python
+class PreferencesScaffold(BaseContextScaffold):
+    scaffold_type = "preferences"
+
+    class StateModel(BaseModel):
+        theme: str = "light"
+        language: str = "en"
+        notifications: bool = True
+
+    @operation
+    def set_preference(self, key: str, value: str) -> str:
+        """Update a preference."""
+        setattr(self.state, key, value)
+        return f"Set {key} to {value}"
+
+    def render(self):
+        prefs = [f"{k}: {v}" for k, v in self.state.dict().items()]
+        return TextContent(
+            content=f"Preferences:\n" + "\n".join(prefs),
+            key="user_preferences"
+        )
+
+agent = Agent(provider="openai:gpt-4", scaffolds=[PreferencesScaffold])
+agent.call("Set my theme to dark")
+agent.call("Enable notifications")
+```
+
+### 2. Task Management
+
+```python
+class TaskScaffold(BaseContextScaffold):
+    scaffold_type = "tasks"
+
+    class StateModel(BaseModel):
+        tasks: list[dict] = []
+
+    @operation
+    def add_task(self, title: str, priority: str = "medium") -> str:
+        """Add a task."""
+        task = {"title": title, "priority": priority, "status": "pending"}
+        self.state.tasks.append(task)
+        return f"Added task: {title}"
+
+    @operation
+    def complete_task(self, title: str) -> str:
+        """Complete a task."""
+        for task in self.state.tasks:
+            if task["title"] == title:
+                task["status"] = "completed"
+                return f"Completed: {title}"
+        return f"Task not found: {title}"
+
+    def render(self):
+        pending = [t for t in self.state.tasks if t["status"] == "pending"]
+        return TextContent(
+            content=f"{len(pending)} pending tasks",
+            key="task_count"
+        )
+```
+
+### 3. Context Summarization
+
+```python
+class SummaryScaffold(BaseContextScaffold):
+    scaffold_type = "summary"
+
+    def render(self):
+        # Analyze recent messages
+        thread = self.agent.thread.current
+        message_count = len(thread.all_messages)
+
+        # Track topics
+        topics = self.extract_topics(thread)
+
+        return TextContent(
+            content=f"Conversation summary:\n"
+                    f"Messages: {message_count}\n"
+                    f"Topics: {', '.join(topics)}",
+            key="conversation_summary",
+            ttl=5  # Update every 5 turns
+        )
+
+    def extract_topics(self, thread):
+        # Topic extraction logic
+        return ["python", "documentation", "AI"]
+```
+
+### 4. Memory Consolidation
+
+```python
+class MemoryScaffold(BaseContextScaffold):
+    scaffold_type = "memory"
+
+    class StateModel(BaseModel):
+        short_term: list[str] = []
+        long_term: list[str] = []
+
+    def render(self):
+        # Consolidate short-term to long-term
+        if len(self.state.short_term) > 10:
+            summary = self.consolidate(self.state.short_term)
+            self.state.long_term.append(summary)
+            self.state.short_term.clear()
+
+        return TextContent(
+            content=f"Memories: {len(self.state.long_term)} consolidated",
+            key="memory_status"
+        )
+
+    def consolidate(self, memories: list[str]) -> str:
+        # Use AI to summarize
+        summary_agent = Agent(provider="openai:gpt-4")
+        return summary_agent.call(
+            f"Summarize these memories:\n" + "\n".join(memories)
+        )
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Pydantic for state">
+    Type-safe state with validation:
+
+    ```python
+    from pydantic import BaseModel, Field
+
+    class StateModel(BaseModel):
+        count: int = Field(ge=0)  # Non-negative
+        items: list[str] = []
+        enabled: bool = True
+
+    class MyScaffold(BaseContextScaffold):
+        state_model = StateModel
+    ```
+  </Accordion>
+
+  <Accordion title="Keep state focused">
+    Each scaffold should have a single responsibility:
+
+    ```python
+    # Good: Focused scaffolds
+    class TaskScaffold(BaseContextScaffold): ...
+    class NotesScaffold(BaseContextScaffold): ...
+
+    # Bad: Kitchen sink scaffold
+    class EverythingScaffold(BaseContextScaffold):
+        # tasks, notes, preferences, files, etc. - too much!
+    ```
+  </Accordion>
+
+  <Accordion title="Use operations for mutations">
+    Expose state changes as operations:
+
+    ```python
+    class ScaffoldWithOps(BaseContextScaffold):
+        @operation
+        def add_item(self, item: str) -> str:
+            """Add item - exposed as tool."""
+            self.state.items.append(item)
+            return f"Added: {item}"
+
+        # Don't: Modify state without @operation
+        # Agent won't be able to use it
+    ```
+  </Accordion>
+
+  <Accordion title="Control rendering frequency">
+    Use TTL and selective re-rendering:
+
+    ```python
+    def render(self):
+        return TextContent(
+            content=self.generate_summary(),
+            key="summary",
+            ttl=10,     # Only re-render every 10 turns
+            cadence=10  # Sticky behavior
+        )
+
+    def should_rerender(self, ctx):
+        # Only re-render on important changes
+        return ctx.operation_type == "insert"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Performance Considerations
+
+### Rendering Overhead
+
+Scaffolds add minimal overhead:
+
+```python
+# Reactive scaffolds: ~5% overhead with 5+ scaffolds
+agent = Agent(
+    provider="openai:gpt-4",
+    scaffolds=[S1, S2, S3, S4, S5]  # Minimal impact
+)
+
+# Disable reactivity if needed
+class NonReactiveScaffold(BaseContextScaffold):
+    _reactive = False  # No automatic re-rendering
+```
+
+### State Size
+
+Keep state manageable:
+
+```python
+# Good: Bounded state
+class BoundedScaffold(BaseContextScaffold):
+    def render(self):
+        # Keep only recent items
+        if len(self.state.items) > 100:
+            self.state.items = self.state.items[-100:]
+
+# Bad: Unbounded growth
+# State grows forever - memory issues
+```
+
+### Operation Complexity
+
+Keep operations fast:
+
+```python
+# Good: Fast operations
+@operation
+def add_item(self, item: str) -> str:
+    self.state.items.append(item)  # O(1)
+    return "Added"
+
+# Bad: Slow operations
+@operation
+def analyze_all(self) -> str:
+    # Expensive AI call - blocks agent
+    result = expensive_analysis(self.state.items)
+    return result  # Consider async or background processing
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Creating Scaffolds" icon="hammer" href="/features/scaffolds/creating-scaffolds">
+    Learn how to build custom scaffolds
+  </Card>
+
+  <Card title="Scaffold IPC" icon="share-nodes" href="/features/scaffolds/scaffold-ipc">
+    Formal communication between scaffolds
+  </Card>
+
+  <Card title="Built-in Scaffolds" icon="layer-group" href="/features/scaffolds/builtin-scaffolds">
+    Complete guide to InternalNotes, FileManager, Shell
+  </Card>
+
+  <Card title="Retention Management" icon="database" href="/features/scaffolds/retention-management">
+    Managing scaffold state and persistence
+  </Card>
+</CardGroup>

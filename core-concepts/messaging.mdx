@@ -1,8 +1,696 @@
 ---
-title: Messaging
-description: Documentation coming soon
+title: Messaging System
+description: Understanding ProviderThread, ContentBlocks, and universal message handling across all AI providers
 ---
 
-# Messaging
+# Messaging System
 
-[Content coming soon]
+Egregore's **messaging system** provides universal message handling through **ProviderThread** containers and **ContentBlocks**. This architecture enables seamless communication with 30+ AI providers using a single, consistent interface.
+
+## The Problem with Provider-Specific Formats
+
+Traditional approaches require different message formats for each provider:
+
+```python
+# OpenAI format
+{"role": "user", "content": "Hello"}
+
+# Anthropic format
+{"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+
+# Google format
+{"parts": [{"text": "Hello"}], "role": "user"}
+```
+
+**Egregore solves this** with a universal message system that works identically across all providers.
+
+## Core Concepts
+
+### ProviderThread
+
+A **ProviderThread** is a container that organizes messages into three categories:
+
+1. **SystemHeader** - System instructions and configuration
+2. **ProviderResponse** - AI model responses
+3. **ClientRequest** - User messages
+
+```python
+from egregore import Agent
+
+agent = Agent(provider="openai:gpt-4")
+agent.call("Hello!")
+
+# Access the thread
+thread = agent.thread.current
+
+# Three message categories
+print(thread.system_header)        # System instructions
+print(thread.provider_responses)   # AI responses
+print(thread.client_requests)      # User messages
+print(thread.all_messages)          # All messages in order
+```
+
+<Info>
+  ProviderThread automatically formats messages for any provider. You work with a universal structure, and Egregore handles provider-specific conversion.
+</Info>
+
+### ContentBlocks
+
+**ContentBlocks** are the atomic units of content within messages:
+
+```python
+from egregore.core.messaging.content_blocks import (
+    TextContent,      # Plain text
+    ImageContent,     # Images
+    AudioContent,     # Audio files
+    VideoContent,     # Video files
+    DocumentContent,  # Documents (PDF, etc.)
+    ToolCallContent,  # Function calls
+    ToolResultContent # Function results
+)
+```
+
+## The 3-Message-Type System
+
+### 1. SystemHeader
+
+System-level instructions that guide AI behavior:
+
+```python
+agent = Agent(
+    provider="openai:gpt-4",
+    system_prompt="You are a helpful Python expert."
+)
+
+# Access system header
+header = agent.thread.current.system_header
+print(header.content)  # TextContent with system prompt
+```
+
+**Characteristics:**
+- One per thread
+- Contains system instructions
+- Never expires (permanent)
+- Lives at depth -1 in PACT tree
+
+### 2. ClientRequest
+
+User messages sent to the AI:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+agent.call("What's the weather?")
+
+# Access user messages
+requests = agent.thread.current.client_requests
+for req in requests:
+    print(f"User: {req.content.text}")
+```
+
+**Characteristics:**
+- Multiple per thread
+- Contains user input
+- Can include multimedia (images, audio, etc.)
+- Stored at position 0 in PACT tree
+
+### 3. ProviderResponse
+
+AI model responses:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+response = agent.call("Tell me a joke")
+
+# Access AI responses
+responses = agent.thread.current.provider_responses
+for resp in responses:
+    print(f"AI: {resp.content.text}")
+```
+
+**Characteristics:**
+- Multiple per thread
+- Contains AI output
+- Can include tool calls
+- Stored at position 0 in PACT tree
+
+## ContentBlock Types
+
+### TextContent
+
+Plain text messages:
+
+```python
+from egregore.core.messaging.content_blocks import TextContent
+
+text = TextContent(text="Hello, world!")
+print(text.text)  # "Hello, world!"
+```
+
+**Used in:**
+- User messages
+- AI responses
+- System instructions
+
+### ImageContent
+
+Image data in various formats:
+
+```python
+from egregore.core.messaging.content_blocks import ImageContent
+
+# From file
+image = ImageContent.from_file("photo.jpg")
+
+# From URL
+image = ImageContent.from_url("https://example.com/image.png")
+
+# From base64
+image = ImageContent.from_base64(base64_data, mime_type="image/jpeg")
+```
+
+**Supported formats:**
+- JPEG, PNG, GIF, WebP
+- Base64 encoded or URLs
+- Automatic provider-specific formatting
+
+### AudioContent
+
+Audio files for speech-to-text or audio analysis:
+
+```python
+from egregore.core.messaging.content_blocks import AudioContent
+
+audio = AudioContent.from_file("recording.mp3")
+```
+
+**Supported formats:**
+- MP3, WAV, M4A, FLAC
+- Provider-dependent support
+
+### VideoContent
+
+Video files for multimodal models:
+
+```python
+from egregore.core.messaging.content_blocks import VideoContent
+
+video = VideoContent.from_file("demo.mp4")
+```
+
+**Supported formats:**
+- MP4, MOV, AVI
+- Provider-dependent support
+
+### DocumentContent
+
+Documents like PDFs for document analysis:
+
+```python
+from egregore.core.messaging.content_blocks import DocumentContent
+
+doc = DocumentContent.from_file("report.pdf")
+```
+
+**Supported formats:**
+- PDF, DOCX, TXT
+- Provider-dependent support
+
+### ToolCallContent
+
+Function call requests from AI:
+
+```python
+from egregore.core.messaging.content_blocks import ToolCallContent
+
+tool_call = ToolCallContent(
+    id="call_123",
+    function_name="get_weather",
+    arguments={"city": "Tokyo"}
+)
+```
+
+**Used for:**
+- AI requests to execute tools
+- Part of provider responses
+- Automatically generated by providers
+
+### ToolResultContent
+
+Function execution results:
+
+```python
+from egregore.core.messaging.content_blocks import ToolResultContent
+
+result = ToolResultContent(
+    tool_call_id="call_123",
+    result="Weather in Tokyo: Sunny, 72°F"
+)
+```
+
+**Used for:**
+- Tool execution results
+- Sent back to AI for synthesis
+- Part of client requests
+
+## Message Flow
+
+### Basic Request-Response
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# User message → ClientRequest
+agent.call("Hello!")
+
+# Flow:
+# 1. ClientRequest created with TextContent("Hello!")
+# 2. Added to ProviderThread
+# 3. Thread formatted for OpenAI
+# 4. Sent to provider
+# 5. ProviderResponse created with AI's reply
+# 6. Added to ProviderThread
+# 7. Response returned to user
+```
+
+### Tool Call Flow
+
+```python
+from egregore.tools import tool
+
+@tool
+def get_weather(city: str) -> str:
+    return f"Weather in {city}: Sunny"
+
+agent = Agent(provider="openai:gpt-4", tools=[get_weather])
+response = agent.call("What's the weather in Tokyo?")
+
+# Flow:
+# 1. ClientRequest: "What's the weather in Tokyo?"
+# 2. ProviderResponse with ToolCallContent(function_name="get_weather", arguments={"city": "Tokyo"})
+# 3. Tool executed internally
+# 4. ClientRequest with ToolResultContent(result="Weather in Tokyo: Sunny")
+# 5. ProviderResponse with synthesized answer
+```
+
+### Multimedia Message Flow
+
+```python
+from egregore.core.messaging.content_blocks import ImageContent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Create multimodal message
+image = ImageContent.from_file("diagram.png")
+agent.call([
+    TextContent(text="What does this diagram show?"),
+    image
+])
+
+# Flow:
+# 1. ClientRequest with [TextContent, ImageContent]
+# 2. Thread formats for provider (different formats for OpenAI vs Anthropic)
+# 3. Provider processes multimodal input
+# 4. ProviderResponse with text analysis
+```
+
+## ProviderThread API
+
+### Accessing Messages
+
+```python
+thread = agent.thread.current
+
+# System header
+header = thread.system_header  # Single SystemHeader
+
+# All messages
+all_msgs = thread.all_messages  # List[ClientRequest | ProviderResponse]
+
+# By type
+requests = thread.client_requests       # List[ClientRequest]
+responses = thread.provider_responses   # List[ProviderResponse]
+
+# Count messages
+print(f"Total messages: {len(thread.all_messages)}")
+```
+
+### Message Order
+
+Messages are stored in chronological order:
+
+```python
+agent.call("First message")
+agent.call("Second message")
+
+all_msgs = agent.thread.current.all_messages
+# [ClientRequest("First"), ProviderResponse("..."),
+#  ClientRequest("Second"), ProviderResponse("...")]
+```
+
+### Historical Thread Access
+
+Access thread state from past episodes:
+
+```python
+# Create snapshot
+snapshot_id = agent.context.seal(trigger="checkpoint")
+
+# Access historical thread
+historical_thread = agent.thread.at_snapshot(snapshot_id)
+print(f"Messages at episode {snapshot_id}: {len(historical_thread.all_messages)}")
+```
+
+## Provider-Specific Formatting
+
+### Automatic Format Conversion
+
+Egregore handles conversion automatically:
+
+```python
+# Same code works for all providers
+agent = Agent(provider="openai:gpt-4")
+agent.call("Hello")
+
+agent = Agent(provider="anthropic:claude-3-5-sonnet-20241022")
+agent.call("Hello")
+
+agent = Agent(provider="google:gemini-pro")
+agent.call("Hello")
+
+# ProviderThread formats messages correctly for each provider
+```
+
+### Format Methods
+
+Providers implement format methods:
+
+```python
+# OpenAI format
+formatted = provider.format_messages(thread)
+# [{"role": "user", "content": "Hello"}]
+
+# Anthropic format
+formatted = provider.format_messages(thread)
+# [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
+```
+
+<Note>
+  You rarely need to call format methods directly. Egregore handles formatting automatically during `agent.call()`.
+</Note>
+
+## Usage Tracking
+
+### Per-Message Tracking
+
+Each message tracks token usage:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+agent.call("Hello!")
+
+# Access usage
+response = agent.thread.current.provider_responses[-1]
+print(f"Prompt tokens: {response.usage.prompt_tokens}")
+print(f"Completion tokens: {response.usage.completion_tokens}")
+```
+
+### Aggregate Usage
+
+Track total usage across conversation:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+agent.call("First message")
+agent.call("Second message")
+agent.call("Third message")
+
+# Total usage
+print(f"Total tokens: {agent.usage.total_tokens}")
+print(f"Total cost: ${agent.usage.total_cost:.4f}")
+```
+
+## Multimodal Messages
+
+### Sending Images
+
+```python
+from egregore.core.messaging.content_blocks import ImageContent, TextContent
+
+agent = Agent(provider="openai:gpt-4")
+
+image = ImageContent.from_file("chart.png")
+response = agent.call([
+    TextContent(text="Analyze this chart"),
+    image
+])
+```
+
+### Sending Multiple Content Types
+
+```python
+# Multiple images and text
+response = agent.call([
+    TextContent(text="Compare these images"),
+    ImageContent.from_file("before.jpg"),
+    ImageContent.from_file("after.jpg")
+])
+```
+
+### Provider Support
+
+Different providers support different content types:
+
+| Provider | Text | Images | Audio | Video | Documents |
+|----------|------|--------|-------|-------|-----------|
+| OpenAI   | ✅   | ✅     | ✅    | ❌    | ✅        |
+| Anthropic| ✅   | ✅     | ❌    | ❌    | ✅        |
+| Google   | ✅   | ✅     | ✅    | ✅    | ✅        |
+
+<Warning>
+  Check provider capabilities before sending multimedia content. Unsupported content types will raise an error.
+</Warning>
+
+## Message Persistence
+
+### Messages in PACT Context
+
+Messages are stored in the PACT tree:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+agent.call("Hello")
+
+# Messages at position 0
+message = agent.context["d0, 0, 0"]  # Current message
+prev_message = agent.context["d1, 0, 0"]  # Previous message
+
+# Messages participate in ODI
+# (0,0,0) → (1,0,0) → (2,0,0) as new messages arrive
+```
+
+### Serialization
+
+ProviderThread is PACT-compliant and serializable:
+
+```python
+import json
+
+thread = agent.thread.current
+
+# Serialize thread
+thread_data = thread.model_dump()
+json_data = json.dumps(thread_data, indent=2)
+
+# Save to file
+with open("thread.json", "w") as f:
+    f.write(json_data)
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use ContentBlocks for structured data">
+    ContentBlocks provide type safety and automatic formatting:
+
+    ```python
+    # Good: Structured with ContentBlocks
+    from egregore.core.messaging.content_blocks import TextContent
+
+    agent.call([
+        TextContent(text="Analyze this"),
+        ImageContent.from_file("data.png")
+    ])
+
+    # Bad: String concatenation loses structure
+    agent.call("Analyze this image: data.png")
+    ```
+  </Accordion>
+
+  <Accordion title="Check provider capabilities">
+    Verify provider support before using advanced features:
+
+    ```python
+    # Check if provider supports images
+    if agent.provider.supports_images:
+        image = ImageContent.from_file("chart.png")
+        agent.call([TextContent("Analyze"), image])
+    else:
+        agent.call("Image analysis not available")
+    ```
+  </Accordion>
+
+  <Accordion title="Access messages through thread">
+    Use thread accessors instead of direct context access:
+
+    ```python
+    # Good: Thread accessor
+    messages = agent.thread.current.all_messages
+
+    # Bad: Direct context access
+    # message = agent.context["d0, 0, 0"]  # Less readable
+    ```
+  </Accordion>
+
+  <Accordion title="Monitor token usage">
+    Track usage to control costs:
+
+    ```python
+    agent = Agent(provider="openai:gpt-4")
+    agent.call("Some message")
+
+    if agent.usage.total_tokens > 50000:
+        print("High token usage - consider optimization")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Patterns
+
+### Conversation with Context
+
+```python
+agent = Agent(
+    provider="openai:gpt-4",
+    system_prompt="You are a helpful assistant."
+)
+
+# Multi-turn conversation
+agent.call("My name is Alice")
+agent.call("What's my name?")  # Agent remembers: "Alice"
+
+# Thread maintains full history
+thread = agent.thread.current
+print(f"Conversation has {len(thread.all_messages)} messages")
+```
+
+### Tool-Augmented Responses
+
+```python
+from egregore.tools import tool
+
+@tool
+def calculator(expression: str) -> float:
+    """Evaluate mathematical expression."""
+    return eval(expression)
+
+agent = Agent(
+    provider="openai:gpt-4",
+    tools=[calculator]
+)
+
+response = agent.call("What's 15 * 23 + 45?")
+# Agent uses calculator tool automatically
+# Thread contains: ClientRequest, ProviderResponse(ToolCall),
+#                  ClientRequest(ToolResult), ProviderResponse(Answer)
+```
+
+### Multimodal Analysis
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# Send image with question
+image = ImageContent.from_file("sales_chart.png")
+response = agent.call([
+    TextContent(text="What insights can you draw from this chart?"),
+    image
+])
+
+print(response)  # AI analyzes the chart
+```
+
+### Message History Export
+
+```python
+# Export conversation for analysis
+thread = agent.thread.current
+
+conversation = []
+for msg in thread.all_messages:
+    if isinstance(msg, ClientRequest):
+        conversation.append({"role": "user", "content": msg.content.text})
+    elif isinstance(msg, ProviderResponse):
+        conversation.append({"role": "assistant", "content": msg.content.text})
+
+# Save to file
+import json
+with open("conversation.json", "w") as f:
+    json.dump(conversation, f, indent=2)
+```
+
+## Integration with Context System
+
+### Messages as PACT Components
+
+Messages are stored in the context tree:
+
+```python
+# Current message at d0,0,0
+current_msg = agent.context["d0, 0, 0"]
+
+# Previous message at d1,0,0 (pushed back by ODI)
+prev_msg = agent.context["d1, 0, 0"]
+
+# Messages participate in ODI automatically
+agent.call("New message")
+# Previous messages shift: (0,0,0) → (1,0,0) → (2,0,0)
+```
+
+### Message Metadata
+
+Messages can have additional context components:
+
+```python
+from egregore.core.context_management.pact.components import TextContent
+
+# Add metadata to current message
+metadata = TextContent(
+    content="Important: user question about pricing",
+    key="message_metadata"
+)
+agent.context.pact_insert("d0, 1, 0", metadata)
+
+# Metadata follows message through ODI
+# When message moves to (1,0,0), metadata moves to (1,1,0)
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Providers" icon="plug" href="/core-concepts/providers">
+    Learn about the provider system and 30+ supported models
+  </Card>
+
+  <Card title="Multimedia Support" icon="image" href="/features/multimedia">
+    Deep dive into working with images, audio, and video
+  </Card>
+
+  <Card title="Context Management" icon="database" href="/core-concepts/context-management">
+    Understand how messages fit into the PACT tree
+  </Card>
+
+  <Card title="Message API Reference" icon="code" href="/api-reference/messaging/overview">
+    Complete API documentation for messaging system
+  </Card>
+</CardGroup>

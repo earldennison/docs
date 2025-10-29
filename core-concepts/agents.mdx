@@ -1,8 +1,748 @@
 ---
 title: Agents
-description: Documentation coming soon
+description: Understanding the Agent class, lifecycle, and how it orchestrates context, providers, hooks, and scaffolds
 ---
 
 # Agents
 
-[Content coming soon]
+The **Agent** class is the central orchestrator in Egregore, tying together context management, provider communication, hooks, scaffolds, and workflows. Think of it as the "brain" that coordinates all the framework's systems.
+
+## What is an Agent?
+
+An Agent represents a single AI assistant instance with:
+
+- **Context tree** - Maintains conversation memory and state
+- **Provider** - Communicates with AI models (OpenAI, Anthropic, etc.)
+- **Hooks** - Lifecycle event handlers for observability
+- **Scaffolds** - Persistent memory and capabilities
+- **State system** - Formal IPC for scaffold communication
+- **History** - Snapshot-based historical access
+
+<Info>
+  Agents are **stateful** and maintain memory across interactions. Each call updates the context tree automatically.
+</Info>
+
+## Creating an Agent
+
+### Basic Agent
+
+The simplest agent requires only a provider:
+
+```python
+from egregore import Agent
+
+# Create agent with OpenAI
+agent = Agent(provider="openai:gpt-4")
+
+# Make a call
+response = agent.call("Hello! What can you help me with?")
+print(response)
+```
+
+### With System Prompt
+
+Add instructions that guide the agent's behavior:
+
+```python
+agent = Agent(
+    provider="openai:gpt-4",
+    system_prompt="You are a helpful coding assistant specialized in Python."
+)
+
+response = agent.call("How do I read a CSV file?")
+```
+
+### With Configuration
+
+Customize model parameters:
+
+```python
+agent = Agent(
+    provider="anthropic:claude-3-5-sonnet-20241022",
+    system_prompt="You are a concise assistant.",
+    model_config={
+        "temperature": 0.7,
+        "max_tokens": 1000,
+        "top_p": 0.9
+    }
+)
+```
+
+## Agent Lifecycle
+
+### Interaction Flow
+
+Understanding what happens during an agent call:
+
+```
+1. User calls agent.call("message")
+   ↓
+2. Message added to context at (d0, 0, 0)
+   ↓
+3. Context hooks fire (before_change)
+   ↓
+4. MessageScheduler advances episode
+   ↓
+5. TTL processing + ODI shifting
+   ↓
+6. Scaffolds render (if reactive)
+   ↓
+7. Context formatted for provider
+   ↓
+8. Provider calls AI model
+   ↓
+9. Response received
+   ↓
+10. Response added to context
+    ↓
+11. Context hooks fire (after_change)
+    ↓
+12. Scaffolds re-render (if needed)
+    ↓
+13. Response returned to user
+```
+
+### Automatic Context Management
+
+Agents maintain conversation history automatically:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# Turn 1
+agent.call("My name is Alice")  # Context at d0, 0, 0
+
+# Turn 2
+agent.call("What's my name?")    # Previous at d1, 0, 0, new at d0, 0, 0
+# Agent remembers: "Alice"
+
+# Turn 3
+agent.call("What did I just ask?")  # Agent has full history
+# Previous messages at d1, d2; new at d0
+```
+
+## Core Agent Methods
+
+### `call()` - Synchronous Interaction
+
+Send a message and get a complete response:
+
+```python
+response = agent.call("What's the weather in Tokyo?")
+print(response)  # String response
+```
+
+**With tool calls:**
+```python
+from egregore.tools import tool
+
+@tool
+def get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return f"Weather in {city}: Sunny, 72°F"
+
+agent = Agent(
+    provider="openai:gpt-4",
+    tools=[get_weather]
+)
+
+response = agent.call("What's the weather in Tokyo?")
+# Agent automatically calls get_weather("Tokyo")
+# Returns: "Weather in Tokyo: Sunny, 72°F"
+```
+
+### `acall()` - Async Interaction
+
+Async version for concurrent operations:
+
+```python
+import asyncio
+
+async def main():
+    agent = Agent(provider="openai:gpt-4")
+    response = await agent.acall("Tell me a joke")
+    print(response)
+
+asyncio.run(main())
+```
+
+### `stream()` - Streaming Response
+
+Get real-time token-by-token responses:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+for chunk in agent.stream("Write a short story"):
+    print(chunk, end="", flush=True)
+```
+
+**Async streaming:**
+```python
+async def stream_response():
+    agent = Agent(provider="openai:gpt-4")
+
+    async for chunk in agent.astream("Tell me about quantum computing"):
+        print(chunk, end="", flush=True)
+
+asyncio.run(stream_response())
+```
+
+### `events()` - Event Streaming
+
+Monitor agent activity with fine-grained event types:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+for event in agent.events("What's 2+2?"):
+    if event.type == "tool_call_start":
+        print(f"Calling tool: {event.data['tool_name']}")
+    elif event.type == "tool_call_complete":
+        print(f"Tool result: {event.data['result']}")
+    elif event.type == "text_chunk":
+        print(event.data["content"], end="", flush=True)
+```
+
+<Card title="Learn More" icon="wave-pulse" href="/features/event-streaming">
+  Complete guide to event streaming and event types
+</Card>
+
+## Agent Properties
+
+### Context Access
+
+Direct access to the context tree:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# Access context
+print(f"Current episode: {agent.context.current_episode}")
+
+# Insert components
+from egregore.core.context_management.pact.components import TextContent
+
+note = TextContent(content="User prefers formal tone")
+agent.context.pact_insert("d0, 1, 0", note)
+
+# Query context
+component = agent.context["d0, 1, 0"]
+```
+
+### Provider Access
+
+Interact with the underlying provider:
+
+```python
+# Provider information
+print(f"Provider: {agent.provider.name}")        # "openai"
+print(f"Model: {agent.provider.model}")          # "gpt-4"
+
+# Provider settings
+print(agent.provider.settings)  # Dict of model parameters
+```
+
+### History Access
+
+Access historical snapshots:
+
+```python
+# Create snapshot
+snapshot_id = agent.context.seal(trigger="checkpoint")
+
+# Access historical state
+historical = agent.history.at_snapshot(snapshot_id)
+component = historical["d0, 1, 0"]
+```
+
+### Hooks Access
+
+Register lifecycle hooks:
+
+```python
+@agent.hooks.tool.pre_call
+def log_tool_call(ctx):
+    print(f"Calling tool: {ctx.tool_name}")
+
+@agent.hooks.context.after_change
+def log_context_change(ctx):
+    print(f"Context operation: {ctx.operation_type}")
+```
+
+<Card title="Learn More" icon="webhook" href="/features/hooks/overview">
+  Complete hook system documentation
+</Card>
+
+### Scaffolds Access
+
+Manage agent capabilities:
+
+```python
+# Access scaffold state
+notes = agent.scaffolds["notes"]
+print(notes.state.notes)  # List of notes
+
+# Scaffolds render automatically on context changes
+agent.call("Remember: user prefers Python")
+# InternalNotesScaffold updates automatically
+```
+
+### Thread Access
+
+Access message formatting:
+
+```python
+# Current thread
+thread = agent.thread.current
+print(f"System header: {thread.system_header}")
+print(f"Messages: {len(thread.all_messages)}")
+
+# Historical threads
+historical_thread = agent.thread.at_snapshot(snapshot_id)
+```
+
+### Usage Tracking
+
+Monitor token consumption:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+agent.call("Hello!")
+print(f"Prompt tokens: {agent.usage.prompt_tokens}")
+print(f"Completion tokens: {agent.usage.completion_tokens}")
+print(f"Total tokens: {agent.usage.total_tokens}")
+```
+
+### State System
+
+Formal scaffold IPC:
+
+```python
+# Scaffolds communicate through agent state
+agent.state.set("task_status", "processing", source="task_scaffold")
+
+# Other scaffolds can read
+status = agent.state.get("task_status")
+print(f"Status: {status.value}, Source: {status.source}")
+```
+
+<Card title="Learn More" icon="share-nodes" href="/features/scaffolds/scaffold-ipc">
+  Scaffold IPC and state management
+</Card>
+
+## Agent Configuration
+
+### Model Parameters
+
+Configure provider-specific parameters:
+
+```python
+agent = Agent(
+    provider="openai:gpt-4",
+    model_config={
+        "temperature": 0.7,      # Creativity (0-2)
+        "max_tokens": 2000,      # Response length
+        "top_p": 0.9,            # Nucleus sampling
+        "frequency_penalty": 0.5, # Reduce repetition
+        "presence_penalty": 0.5   # Encourage new topics
+    }
+)
+```
+
+### Provider Switching
+
+Change providers at runtime:
+
+```python
+# Start with OpenAI
+agent = Agent(provider="openai:gpt-4")
+agent.call("Hello")
+
+# Switch to Anthropic
+agent.config.provider = "anthropic:claude-3-5-sonnet-20241022"
+agent.call("Continue the conversation")
+# Context preserved across providers!
+```
+
+### System Prompt Updates
+
+Modify behavior dynamically:
+
+```python
+agent = Agent(
+    provider="openai:gpt-4",
+    system_prompt="You are a helpful assistant."
+)
+
+# Update system prompt
+agent.config.system_prompt = "You are a coding expert specializing in Python."
+agent.call("How do I handle exceptions?")
+```
+
+## Tools Integration
+
+### Adding Tools
+
+Tools extend agent capabilities:
+
+```python
+from egregore.tools import tool
+
+@tool
+def calculate(expression: str) -> float:
+    """Evaluate a mathematical expression."""
+    return eval(expression)
+
+@tool
+def get_time() -> str:
+    """Get current time."""
+    from datetime import datetime
+    return datetime.now().strftime("%H:%M:%S")
+
+agent = Agent(
+    provider="openai:gpt-4",
+    tools=[calculate, get_time]
+)
+
+# Agent can now use tools
+response = agent.call("What's 15 * 23?")
+# Automatically calls calculate("15 * 23")
+
+response = agent.call("What time is it?")
+# Automatically calls get_time()
+```
+
+### Tool Execution Loop
+
+Agents automatically handle tool calls:
+
+```python
+agent = Agent(provider="openai:gpt-4", tools=[get_weather, search_docs])
+
+response = agent.call("What's the weather in Tokyo and find docs about PACT?")
+# Agent orchestrates:
+# 1. Calls get_weather("Tokyo")
+# 2. Calls search_docs("PACT")
+# 3. Synthesizes results into final response
+```
+
+<Card title="Learn More" icon="wrench" href="/features/tools/overview">
+  Complete tool system documentation
+</Card>
+
+## Scaffolds Integration
+
+### Built-in Scaffolds
+
+Agents come with powerful built-in scaffolds:
+
+```python
+agent = Agent(
+    provider="openai:gpt-4",
+    enable_scaffolds=True  # Default: True
+)
+
+# InternalNotesScaffold - Automatic note-taking
+agent.call("Remember: user prefers Python over JavaScript")
+print(agent.scaffolds["notes"].state.notes)
+# ["User prefers Python over JavaScript"]
+
+# FileManager - File operation tracking
+# ShellScaffold - Command execution history
+```
+
+### Custom Scaffolds
+
+Add custom persistent memory:
+
+```python
+from egregore.core.context_scaffolds.base import BaseContextScaffold
+
+class TaskScaffold(BaseContextScaffold):
+    scaffold_type = "tasks"
+
+    def __init__(self, agent):
+        super().__init__(agent)
+        self.tasks = []
+
+    def render(self):
+        # Render current tasks into context
+        task_text = "\n".join(f"- {task}" for task in self.tasks)
+        return TextContent(
+            content=f"Active tasks:\n{task_text}",
+            key="task_list"
+        )
+
+    @operation
+    def add_task(self, task: str) -> str:
+        """Add a new task."""
+        self.tasks.append(task)
+        return f"Added task: {task}"
+
+agent = Agent(
+    provider="openai:gpt-4",
+    scaffolds=[TaskScaffold]
+)
+
+# Agent can now manage tasks
+agent.call("Add task: write documentation")
+agent.call("What are my current tasks?")
+```
+
+<Card title="Learn More" icon="layer-group" href="/features/scaffolds/overview">
+  Complete scaffold system documentation
+</Card>
+
+## Workflow Integration
+
+### Agents as Workflow Nodes
+
+Agents integrate seamlessly with workflows:
+
+```python
+from egregore import Agent
+from egregore.core.workflow import node, Sequence
+
+researcher = Agent(
+    provider="openai:gpt-4",
+    system_prompt="Research assistant"
+)
+
+writer = Agent(
+    provider="openai:gpt-4",
+    system_prompt="Technical writer"
+)
+
+@node
+def research_topic(topic: str) -> str:
+    return researcher(f"Research this topic: {topic}")
+
+@node
+def write_summary(research: str) -> str:
+    return writer(f"Write a summary based on: {research}")
+
+# Execute workflow
+workflow = Sequence([research_topic, write_summary])
+result = workflow.run(topic="PACT architecture")
+```
+
+**Note**: Agents implement `__call__()` for workflow compatibility.
+
+<Card title="Learn More" icon="diagram-project" href="/features/workflows/overview">
+  Complete workflow system documentation
+</Card>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use descriptive system prompts">
+    Clear instructions lead to better behavior:
+
+    ```python
+    # Good: Specific and clear
+    agent = Agent(
+        provider="openai:gpt-4",
+        system_prompt="You are a Python expert. Provide code examples with explanations. Be concise but thorough."
+    )
+
+    # Bad: Vague
+    agent = Agent(
+        provider="openai:gpt-4",
+        system_prompt="Be helpful."
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="Leverage scaffolds for persistence">
+    Use scaffolds instead of manually managing state:
+
+    ```python
+    # Good: Scaffold handles persistence
+    agent = Agent(provider="openai:gpt-4", enable_scaffolds=True)
+    agent.call("Remember my API key is xyz123")
+    # InternalNotesScaffold automatically stores it
+
+    # Bad: Manual context management
+    agent.context.pact_insert("d0, 1, 0", TextContent("API key: xyz123"))
+    ```
+  </Accordion>
+
+  <Accordion title="Use streaming for long responses">
+    Provide better UX with streaming:
+
+    ```python
+    # Good: Immediate feedback
+    for chunk in agent.stream("Write a long essay"):
+        print(chunk, end="", flush=True)
+
+    # Bad: Wait for entire response
+    response = agent.call("Write a long essay")
+    print(response)  # User waits...
+    ```
+  </Accordion>
+
+  <Accordion title="Monitor usage for cost control">
+    Track token consumption:
+
+    ```python
+    agent = Agent(provider="openai:gpt-4")
+
+    # Check usage after calls
+    agent.call("Some message")
+    if agent.usage.total_tokens > 100000:
+        print("Warning: High token usage!")
+    ```
+  </Accordion>
+
+  <Accordion title="Use hooks for observability">
+    Add logging and monitoring without modifying core logic:
+
+    ```python
+    @agent.hooks.tool.pre_call
+    def log_tools(ctx):
+        logger.info(f"Tool called: {ctx.tool_name}")
+
+    @agent.hooks.context.after_change
+    def log_context(ctx):
+        logger.info(f"Context changed: {ctx.operation_type}")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Patterns
+
+### Multi-Turn Conversation
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# Build context over multiple turns
+agent.call("I'm planning a trip to Japan")
+agent.call("What's the best time to visit?")
+agent.call("What about cherry blossoms?")
+agent.call("Book a flight for March")  # Agent has full conversation history
+```
+
+### Context-Aware Responses
+
+```python
+# Add persistent user preferences
+agent = Agent(provider="openai:gpt-4")
+
+preferences = TextContent(
+    content="User prefers: concise answers, code examples, Python 3.11+",
+    key="user_preferences"
+)
+agent.context.pact_insert("d0, 1, 0", preferences)
+
+# All responses now consider preferences
+agent.call("How do I read a file?")
+# Response will be concise with Python 3.11+ examples
+```
+
+### Tool-Augmented Agent
+
+```python
+@tool
+def search_docs(query: str) -> str:
+    """Search documentation."""
+    return f"Found docs for: {query}"
+
+@tool
+def generate_code(description: str) -> str:
+    """Generate code."""
+    return f"Generated code for: {description}"
+
+agent = Agent(
+    provider="openai:gpt-4",
+    system_prompt="You are a coding assistant with access to docs and code generation.",
+    tools=[search_docs, generate_code]
+)
+
+response = agent.call("Create a function to parse JSON and search docs about it")
+# Agent uses both tools automatically
+```
+
+### Snapshot-Based Debugging
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# Capture state before risky operation
+snapshot = agent.context.seal(trigger="before_delete")
+
+# Perform operation
+agent.call("Delete all my notes")
+
+# Check if something went wrong
+if problem_occurred:
+    # Restore from snapshot
+    historical = agent.history.at_snapshot(snapshot)
+    agent.context = Context.from_snapshot(historical.model_dump())
+```
+
+## Agent State and Lifecycle
+
+### Agent ID
+
+Each agent has a unique identifier:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+print(f"Agent ID: {agent.agent_id}")  # UUID
+```
+
+### Agent Persistence
+
+Agents are in-memory by default, but context can be serialized:
+
+```python
+import json
+
+# Save agent context
+context_data = agent.context.model_dump()
+with open("agent_state.json", "w") as f:
+    json.dump(context_data, f)
+
+# Restore agent context
+with open("agent_state.json", "r") as f:
+    context_data = json.load(f)
+
+from egregore.core.context_management.pact.context.base import Context
+restored_context = Context.from_snapshot(context_data)
+
+agent = Agent(
+    provider="openai:gpt-4",
+    context=restored_context
+)
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Context Management" icon="database" href="/core-concepts/context-management">
+    Deep dive into context operations and lifecycle
+  </Card>
+
+  <Card title="Messaging System" icon="envelope" href="/core-concepts/messaging">
+    Understand ProviderThread and ContentBlocks
+  </Card>
+
+  <Card title="Hooks" icon="webhook" href="/features/hooks/overview">
+    Lifecycle hooks for observability
+  </Card>
+
+  <Card title="Scaffolds" icon="layer-group" href="/features/scaffolds/overview">
+    Persistent memory and capabilities
+  </Card>
+
+  <Card title="Tools" icon="wrench" href="/features/tools/overview">
+    Extend agent capabilities with tools
+  </Card>
+
+  <Card title="Workflows" icon="diagram-project" href="/features/workflows/overview">
+    Orchestrate multi-agent systems
+  </Card>
+</CardGroup>

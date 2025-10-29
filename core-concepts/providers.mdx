@@ -1,8 +1,644 @@
 ---
-title: Providers
-description: Documentation coming soon
+title: Provider System
+description: Understanding Egregore's unified provider interface supporting 30+ AI models with consistent APIs
 ---
 
-# Providers
+# Provider System
 
-[Content coming soon]
+Egregore's **provider system** offers a unified interface for interacting with 30+ AI providers including OpenAI, Anthropic, Google, Mistral, Cohere, and more. Write your code once, and it works seamlessly across all providers.
+
+## The Provider Problem
+
+Different AI providers have different APIs, formats, and capabilities:
+
+```python
+# OpenAI
+import openai
+response = openai.ChatCompletion.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+# Anthropic
+import anthropic
+client = anthropic.Anthropic()
+response = client.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+# Google
+import google.generativeai as genai
+model = genai.GenerativeModel('gemini-pro')
+response = model.generate_content("Hello")
+```
+
+**Egregore solves this** with a single, unified interface.
+
+<Info>
+  Write code once using Egregore's Agent API, and it works identically across all 30+ providers. Switch providers by changing a single string.
+</Info>
+
+## Using Providers
+
+### Provider String Format
+
+Providers use the format `provider:model`:
+
+```python
+from egregore import Agent
+
+# OpenAI
+agent = Agent(provider="openai:gpt-4")
+
+# Anthropic
+agent = Agent(provider="anthropic:claude-3-5-sonnet-20241022")
+
+# Google
+agent = Agent(provider="google:gemini-pro")
+
+# Mistral
+agent = Agent(provider="mistral:mistral-large-latest")
+```
+
+### Supported Providers
+
+Egregore supports 30+ providers:
+
+| Provider | Example Model | Special Features |
+|----------|--------------|------------------|
+| OpenAI | `openai:gpt-4` | Function calling, vision |
+| Anthropic | `anthropic:claude-3-5-sonnet-20241022` | Long context, vision |
+| Google | `google:gemini-pro` | Multimodal, fast |
+| Mistral | `mistral:mistral-large-latest` | European, competitive |
+| Cohere | `cohere:command-r-plus` | RAG optimized |
+| Groq | `groq:llama-3.1-70b-versatile` | Ultra-fast inference |
+| Together | `together:meta-llama/Llama-3-70b` | Open source models |
+| Replicate | `replicate:meta/llama-2-70b` | Custom models |
+
+<Card title="View All" icon="list" href="/api-reference/providers/supported-providers">
+  Complete list of 30+ supported providers and models
+</Card>
+
+### API Key Configuration
+
+Providers require API keys set via environment variables:
+
+```bash
+# OpenAI
+export OPENAI_API_KEY="sk-..."
+
+# Anthropic
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Google
+export GOOGLE_API_KEY="..."
+
+# Multiple providers
+export OPENAI_API_KEY="..."
+export ANTHROPIC_API_KEY="..."
+```
+
+**In Python:**
+```python
+import os
+os.environ["OPENAI_API_KEY"] = "sk-..."
+
+agent = Agent(provider="openai:gpt-4")
+```
+
+## Provider Interface
+
+### Unified Methods
+
+All providers implement the same interface:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# Synchronous call
+response = agent.call("Hello!")
+
+# Async call
+response = await agent.acall("Hello!")
+
+# Streaming
+for chunk in agent.stream("Tell me a story"):
+    print(chunk, end="")
+
+# Async streaming
+async for chunk in agent.astream("Tell me a story"):
+    print(chunk, end="")
+```
+
+**The same code works for ANY provider** - just change the provider string:
+
+```python
+# Switch to Anthropic - code unchanged!
+agent = Agent(provider="anthropic:claude-3-5-sonnet-20241022")
+response = agent.call("Hello!")  # Works identically
+```
+
+### Model Parameters
+
+Configure model-specific parameters:
+
+```python
+agent = Agent(
+    provider="openai:gpt-4",
+    model_config={
+        "temperature": 0.7,       # Randomness (0-2)
+        "max_tokens": 2000,       # Max response length
+        "top_p": 0.9,             # Nucleus sampling
+        "frequency_penalty": 0.5,  # Reduce repetition
+        "presence_penalty": 0.5    # Encourage new topics
+    }
+)
+```
+
+**Parameters are provider-specific** but many are common:
+
+| Parameter | OpenAI | Anthropic | Google | Description |
+|-----------|--------|-----------|--------|-------------|
+| `temperature` | ✅ | ✅ | ✅ | Randomness control |
+| `max_tokens` | ✅ | ✅ | ✅ | Response length limit |
+| `top_p` | ✅ | ✅ | ✅ | Nucleus sampling |
+| `stop` | ✅ | ✅ | ✅ | Stop sequences |
+| `frequency_penalty` | ✅ | ❌ | ❌ | OpenAI-specific |
+| `top_k` | ❌ | ✅ | ✅ | Anthropic/Google-specific |
+
+<Note>
+  Egregore passes parameters directly to providers. Unsupported parameters are ignored gracefully.
+</Note>
+
+## Provider Features
+
+### Universal Token Counting
+
+Egregore provides accurate token counting across all providers:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+agent.call("Hello, how are you?")
+
+# Token usage
+print(f"Prompt tokens: {agent.usage.prompt_tokens}")
+print(f"Completion tokens: {agent.usage.completion_tokens}")
+print(f"Total tokens: {agent.usage.total_tokens}")
+
+# Estimated cost
+print(f"Cost: ${agent.usage.total_cost:.4f}")
+```
+
+**Works for all providers**, even those without native token counting.
+
+### Streaming Support
+
+All providers support streaming:
+
+```python
+# OpenAI streaming
+agent = Agent(provider="openai:gpt-4")
+for chunk in agent.stream("Write a story"):
+    print(chunk, end="", flush=True)
+
+# Anthropic streaming - identical code!
+agent = Agent(provider="anthropic:claude-3-5-sonnet-20241022")
+for chunk in agent.stream("Write a story"):
+    print(chunk, end="", flush=True)
+```
+
+### Tool/Function Calling
+
+Providers with tool support work identically:
+
+```python
+from egregore.tools import tool
+
+@tool
+def get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return f"Weather in {city}: Sunny, 72°F"
+
+# OpenAI with tools
+agent = Agent(provider="openai:gpt-4", tools=[get_weather])
+response = agent.call("What's the weather in Tokyo?")
+
+# Anthropic with tools - same code!
+agent = Agent(provider="anthropic:claude-3-5-sonnet-20241022", tools=[get_weather])
+response = agent.call("What's the weather in Tokyo?")
+```
+
+### Multimodal Support
+
+Providers supporting images, audio, or video use the same API:
+
+```python
+from egregore.core.messaging.content_blocks import ImageContent
+
+image = ImageContent.from_file("chart.png")
+
+# OpenAI vision
+agent = Agent(provider="openai:gpt-4")
+response = agent.call([
+    TextContent(text="What's in this image?"),
+    image
+])
+
+# Google vision - identical code!
+agent = Agent(provider="google:gemini-pro-vision")
+response = agent.call([
+    TextContent(text="What's in this image?"),
+    image
+])
+```
+
+## Provider Switching
+
+### Runtime Provider Change
+
+Switch providers without recreating the agent:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+agent.call("Hello!")
+
+# Switch to Anthropic
+agent.config.provider = "anthropic:claude-3-5-sonnet-20241022"
+agent.call("Continue conversation")
+
+# Context preserved across providers!
+print(agent.context.current_episode)  # Maintains episode count
+```
+
+### Fallback Providers
+
+Implement provider fallback for reliability:
+
+```python
+def create_agent_with_fallback(providers: list[str]):
+    """Try providers in order until one works."""
+    for provider_string in providers:
+        try:
+            agent = Agent(provider=provider_string)
+            agent.call("Test")  # Verify it works
+            return agent
+        except Exception as e:
+            print(f"Failed to use {provider_string}: {e}")
+            continue
+    raise RuntimeError("No working providers available")
+
+# Try OpenAI first, fallback to Anthropic
+agent = create_agent_with_fallback([
+    "openai:gpt-4",
+    "anthropic:claude-3-5-sonnet-20241022"
+])
+```
+
+### Model Comparison
+
+Compare responses from multiple providers:
+
+```python
+question = "What is quantum computing?"
+
+providers = [
+    "openai:gpt-4",
+    "anthropic:claude-3-5-sonnet-20241022",
+    "google:gemini-pro"
+]
+
+for provider_string in providers:
+    agent = Agent(provider=provider_string)
+    response = agent.call(question)
+    print(f"\n{provider_string}:")
+    print(response)
+    print(f"Tokens: {agent.usage.total_tokens}")
+```
+
+## Provider Configuration
+
+### Parameter Merging
+
+Egregore uses 3-tier parameter merging:
+
+```
+1. Provider defaults (lowest priority)
+   ↓
+2. Agent model_config (medium priority)
+   ↓
+3. Call-time kwargs (highest priority)
+```
+
+**Example:**
+```python
+# Provider defaults: temperature=1.0
+agent = Agent(
+    provider="openai:gpt-4",
+    model_config={"temperature": 0.7}  # Override default
+)
+
+# Call with custom temperature
+response = agent.call(
+    "Hello",
+    temperature=0.3  # Override both default and config
+)
+```
+
+### OAuth Interceptors
+
+Premium models (GPT-5, Claude, etc.) use OAuth automatically:
+
+```python
+# OAuth handled automatically for premium models
+agent = Agent(provider="openai:gpt-5")
+# OAuth flow triggered if needed
+response = agent.call("Hello")
+```
+
+<Note>
+  OAuth is automatic for premium tier models. Egregore handles authentication flows transparently.
+</Note>
+
+## Provider Properties
+
+### Accessing Provider Info
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# Provider name
+print(agent.provider.name)  # "openai"
+
+# Model name
+print(agent.provider.model)  # "gpt-4"
+
+# Provider settings
+print(agent.provider.settings)  # Dict of configuration
+
+# Client instance
+print(agent.provider.client)  # Underlying API client
+```
+
+### Provider Capabilities
+
+Check what a provider supports:
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# Feature detection
+has_vision = hasattr(agent.provider, 'supports_vision') and agent.provider.supports_vision
+has_tools = hasattr(agent.provider, 'supports_tools') and agent.provider.supports_tools
+has_streaming = hasattr(agent.provider, 'supports_streaming') and agent.provider.supports_streaming
+
+print(f"Vision: {has_vision}")
+print(f"Tools: {has_tools}")
+print(f"Streaming: {has_streaming}")
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use provider-agnostic code">
+    Write code that works across all providers:
+
+    ```python
+    # Good: Provider-agnostic
+    def ask_question(provider_string: str, question: str) -> str:
+        agent = Agent(provider=provider_string)
+        return agent.call(question)
+
+    # Works with any provider
+    ask_question("openai:gpt-4", "Hello")
+    ask_question("anthropic:claude-3-5-sonnet-20241022", "Hello")
+    ```
+  </Accordion>
+
+  <Accordion title="Set API keys via environment">
+    Use environment variables for security:
+
+    ```python
+    # Good: Environment variables
+    import os
+    os.environ["OPENAI_API_KEY"] = "sk-..."
+    agent = Agent(provider="openai:gpt-4")
+
+    # Bad: Hardcoded keys
+    # agent = Agent(provider="openai:gpt-4", api_key="sk-...")  # Don't commit!
+    ```
+  </Accordion>
+
+  <Accordion title="Monitor token usage">
+    Track usage to control costs:
+
+    ```python
+    agent = Agent(provider="openai:gpt-4")
+    agent.call("Some question")
+
+    # Check usage
+    print(f"Tokens used: {agent.usage.total_tokens}")
+    print(f"Est. cost: ${agent.usage.total_cost:.4f}")
+
+    if agent.usage.total_tokens > 100000:
+        print("Warning: High usage!")
+    ```
+  </Accordion>
+
+  <Accordion title="Test provider switches">
+    Ensure your code works with multiple providers:
+
+    ```python
+    def test_providers():
+        providers = ["openai:gpt-4", "anthropic:claude-3-5-sonnet-20241022"]
+        question = "What is 2+2?"
+
+        for p in providers:
+            agent = Agent(provider=p)
+            response = agent.call(question)
+            assert "4" in response, f"Failed with {p}"
+    ```
+  </Accordion>
+
+  <Accordion title="Use appropriate models">
+    Choose models based on task requirements:
+
+    ```python
+    # Fast, cheap tasks
+    agent = Agent(provider="openai:gpt-3.5-turbo")
+
+    # Complex reasoning
+    agent = Agent(provider="openai:gpt-4")
+
+    # Long context
+    agent = Agent(provider="anthropic:claude-3-5-sonnet-20241022")
+
+    # Ultra-fast inference
+    agent = Agent(provider="groq:llama-3.1-70b-versatile")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Patterns
+
+### Provider Selection by Task
+
+```python
+def get_agent_for_task(task_type: str) -> Agent:
+    """Select optimal provider based on task."""
+    task_providers = {
+        "reasoning": "openai:gpt-4",
+        "creative": "anthropic:claude-3-5-sonnet-20241022",
+        "fast": "groq:llama-3.1-70b-versatile",
+        "long_context": "anthropic:claude-3-5-sonnet-20241022",
+        "cheap": "openai:gpt-3.5-turbo"
+    }
+
+    provider = task_providers.get(task_type, "openai:gpt-4")
+    return Agent(provider=provider)
+
+# Use task-optimized providers
+reasoning_agent = get_agent_for_task("reasoning")
+fast_agent = get_agent_for_task("fast")
+```
+
+### A/B Testing Providers
+
+```python
+import random
+
+def ab_test_providers(prompt: str):
+    """A/B test different providers."""
+    providers = {
+        "control": "openai:gpt-4",
+        "variant": "anthropic:claude-3-5-sonnet-20241022"
+    }
+
+    # Randomly assign
+    group = random.choice(["control", "variant"])
+    agent = Agent(provider=providers[group])
+
+    # Track metrics
+    response = agent.call(prompt)
+    metrics = {
+        "group": group,
+        "tokens": agent.usage.total_tokens,
+        "cost": agent.usage.total_cost,
+        "response_length": len(response)
+    }
+
+    return response, metrics
+```
+
+### Cost-Optimized Provider Selection
+
+```python
+def optimize_for_cost(prompt: str, budget: float) -> str:
+    """Use cheapest provider within budget."""
+    # Ordered by cost (cheapest first)
+    providers = [
+        "openai:gpt-3.5-turbo",      # ~$0.002/1K tokens
+        "google:gemini-pro",          # ~$0.0005/1K tokens
+        "groq:llama-3.1-70b-versatile"  # Very cheap
+    ]
+
+    for provider_string in providers:
+        agent = Agent(provider=provider_string)
+        response = agent.call(prompt)
+
+        if agent.usage.total_cost <= budget:
+            return response
+
+    raise ValueError("No provider within budget")
+```
+
+### Multi-Provider Ensemble
+
+```python
+def ensemble_response(prompt: str, providers: list[str]) -> str:
+    """Get consensus from multiple providers."""
+    responses = []
+
+    for provider_string in providers:
+        agent = Agent(provider=provider_string)
+        response = agent.call(prompt)
+        responses.append(response)
+
+    # Synthesize consensus (simplified)
+    synthesizer = Agent(provider="openai:gpt-4")
+    consensus = synthesizer.call(
+        f"Synthesize these responses into one answer:\n" +
+        "\n\n".join(f"{i+1}. {r}" for i, r in enumerate(responses))
+    )
+
+    return consensus
+
+# Get consensus answer
+answer = ensemble_response(
+    "What is quantum entanglement?",
+    ["openai:gpt-4", "anthropic:claude-3-5-sonnet-20241022", "google:gemini-pro"]
+)
+```
+
+## Performance Considerations
+
+### Streaming for Long Responses
+
+Use streaming for better perceived performance:
+
+```python
+# Without streaming - user waits for entire response
+agent = Agent(provider="openai:gpt-4")
+response = agent.call("Write a long essay")
+print(response)  # User waits...
+
+# With streaming - immediate feedback
+for chunk in agent.stream("Write a long essay"):
+    print(chunk, end="", flush=True)  # Faster perception
+```
+
+### Provider Latency
+
+Different providers have different latencies:
+
+| Provider | Typical Latency | Use Case |
+|----------|----------------|----------|
+| Groq | 50-200ms | Ultra-fast inference |
+| OpenAI | 1-3s | General purpose |
+| Anthropic | 1-4s | Long context |
+| Google | 0.5-2s | Multimodal |
+
+```python
+import time
+
+def benchmark_provider(provider_string: str, prompt: str):
+    """Measure provider latency."""
+    agent = Agent(provider=provider_string)
+
+    start = time.time()
+    response = agent.call(prompt)
+    elapsed = time.time() - start
+
+    print(f"{provider_string}: {elapsed:.2f}s")
+    return elapsed
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Supported Providers" icon="list" href="/api-reference/providers/supported-providers">
+    Complete list of 30+ providers and models
+  </Card>
+
+  <Card title="Provider API Reference" icon="code" href="/api-reference/providers/base-provider">
+    Detailed API documentation for providers
+  </Card>
+
+  <Card title="Token Counting" icon="calculator" href="/api-reference/providers/token-counting">
+    Universal token counting across providers
+  </Card>
+
+  <Card title="Adding Providers" icon="plus" href="/contributing/adding-providers">
+    Guide for contributing new provider integrations
+  </Card>
+</CardGroup>
