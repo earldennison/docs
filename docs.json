@@ -1,122 +1,361 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Egregore",
+  "description": "AI agent framework built on PACT architecture that treats context like a DOM",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
-  },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "tabs": [
-      {
-        "tab": "Guides",
-        "groups": [
-          {
-            "group": "Getting started",
-            "pages": [
-              "index",
-              "quickstart",
-              "development"
-            ]
-          },
-          {
-            "group": "Customization",
-            "pages": [
-              "essentials/settings",
-              "essentials/navigation"
-            ]
-          },
-          {
-            "group": "Writing content",
-            "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "API reference",
-        "groups": [
-          {
-            "group": "API documentation",
-            "pages": [
-              "api-reference/introduction"
-            ]
-          },
-          {
-            "group": "Endpoint examples",
-            "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
-            ]
-          }
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
+    "primary": "#0D9488",
+    "light": "#14B8A6",
+    "dark": "#0F766E"
   },
   "logo": {
     "light": "/logo/light.svg",
     "dark": "/logo/dark.svg"
   },
+  "favicon": "/favicon.svg",
   "navbar": {
     "links": [
       {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
+        "label": "GitHub",
+        "href": "https://github.com/yourusername/egregore"
       }
     ],
     "primary": {
       "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
+      "label": "Get Started",
+      "href": "https://github.com/yourusername/egregore"
     }
   },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "core-concepts/overview",
+          "core-concepts/pact-architecture",
+          "core-concepts/agents",
+          "core-concepts/context-management",
+          "core-concepts/message-scheduler",
+          "core-concepts/context-history",
+          "core-concepts/messaging",
+          "core-concepts/providers"
+        ]
+      },
+      {
+        "group": "Scaffolds",
+        "pages": [
+          "features/scaffolds/overview",
+          "features/scaffolds/creating-scaffolds",
+          "features/scaffolds/scaffold-ipc",
+          "features/scaffolds/builtin-scaffolds",
+          "features/scaffolds/retention-management"
+        ]
+      },
+      {
+        "group": "Hooks",
+        "pages": [
+          "features/hooks/overview",
+          "features/hooks/tool-hooks",
+          "features/hooks/context-hooks",
+          "features/hooks/streaming-hooks",
+          "features/hooks/message-hooks",
+          "features/hooks/scaffold-hooks",
+          "features/hooks/subscribe-api",
+          "features/hooks/reference"
+        ]
+      },
+      {
+        "group": "Workflows",
+        "pages": [
+          "features/workflows/overview",
+          "features/workflows/creating-nodes",
+          "features/workflows/sequences",
+          "features/workflows/parallel-execution",
+          "features/workflows/agent-discovery",
+          "features/workflows/validation",
+          "features/workflows/type-checking",
+          "features/workflows/shared-state",
+          "features/workflows/examples"
+        ]
+      },
+      {
+        "group": "Tools",
+        "pages": [
+          "features/tools/overview",
+          "features/tools/tool-decorator",
+          "features/tools/tool-execution",
+          "features/tools/schema-system",
+          "features/tools/modifying-outputs"
+        ]
+      },
+      {
+        "group": "Other Features",
+        "pages": [
+          "features/event-streaming",
+          "features/telemetry",
+          "features/component-triggers",
+          "features/semantic-functions",
+          "features/multimedia"
+        ]
+      },
+      {
+        "group": "Guides - Getting Started",
+        "pages": [
+          "guides/getting-started/installation",
+          "guides/getting-started/first-agent",
+          "guides/getting-started/environment-setup"
+        ]
+      },
+      {
+        "group": "Guides - Basic Usage",
+        "pages": [
+          "guides/basic-usage/agent-basics",
+          "guides/basic-usage/context-operations",
+          "guides/basic-usage/streaming",
+          "guides/basic-usage/event-streaming",
+          "guides/basic-usage/error-handling"
+        ]
+      },
+      {
+        "group": "Guides - Advanced",
+        "pages": [
+          "guides/advanced/custom-scaffolds",
+          "guides/advanced/hook-patterns",
+          "guides/advanced/workflow-patterns",
+          "guides/advanced/ttl-management",
+          "guides/advanced/context-debugging",
+          "guides/advanced/telemetry-integration"
+        ]
+      },
+      {
+        "group": "Guides - Testing & Debugging",
+        "pages": [
+          "guides/testing-debugging/testing-strategies",
+          "guides/testing-debugging/context-explorer",
+          "guides/testing-debugging/workflow-debugging",
+          "guides/testing-debugging/common-issues"
+        ]
+      },
+      {
+        "group": "Architecture",
+        "pages": [
+          "architecture/overview",
+          "architecture/pact-specification",
+          "architecture/context-internals",
+          "architecture/ttl-lifecycle",
+          "architecture/odi-system",
+          "architecture/render-lifecycle",
+          "architecture/message-scheduler-internals",
+          "architecture/tool-task-loop",
+          "architecture/streaming-orchestrator",
+          "architecture/agent-state-system",
+          "architecture/provider-architecture"
+        ]
+      },
+      {
+        "group": "Contributing",
+        "pages": [
+          "contributing/getting-started",
+          "contributing/development-setup",
+          "contributing/testing",
+          "contributing/adding-providers",
+          "contributing/code-style",
+          "contributing/documentation",
+          "contributing/release-process"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": [
+          "reference/pact-selectors",
+          "reference/hook-types",
+          "reference/error-codes",
+          "reference/configuration-options",
+          "reference/glossary"
+        ]
+      },
+      {
+        "group": "Migration",
+        "pages": [
+          "migration/from-v1",
+          "migration/breaking-changes"
+        ]
+      },
+      {
+        "group": "API - Agent",
+        "pages": [
+          "api-reference/agent/overview",
+          "api-reference/agent/constructor",
+          "api-reference/agent/methods",
+          "api-reference/agent/properties",
+          "api-reference/agent/lifecycle"
+        ]
+      },
+      {
+        "group": "API - Context",
+        "pages": [
+          "api-reference/context/overview",
+          "api-reference/context/operations",
+          "api-reference/context/access",
+          "api-reference/context/serialization",
+          "api-reference/context/history"
+        ]
+      },
+      {
+        "group": "API - Scaffolds",
+        "pages": [
+          "api-reference/scaffolds/base-scaffold",
+          "api-reference/scaffolds/scaffold-state",
+          "api-reference/scaffolds/operation-decorator",
+          "api-reference/scaffolds/change-tracking",
+          "api-reference/scaffolds/registry",
+          "api-reference/scaffolds/builtins"
+        ]
+      },
+      {
+        "group": "API - Tools",
+        "pages": [
+          "api-reference/tools/tool-declaration",
+          "api-reference/tools/tool-executor",
+          "api-reference/tools/tool-registry",
+          "api-reference/tools/schema"
+        ]
+      },
+      {
+        "group": "API - Hooks",
+        "pages": [
+          "api-reference/hooks/hook-decorators",
+          "api-reference/hooks/execution-contexts",
+          "api-reference/hooks/hook-registration",
+          "api-reference/hooks/subscribe-api"
+        ]
+      },
+      {
+        "group": "API - Providers",
+        "pages": [
+          "api-reference/providers/base-provider",
+          "api-reference/providers/provider-methods",
+          "api-reference/providers/format-methods",
+          "api-reference/providers/token-counting",
+          "api-reference/providers/supported-providers"
+        ]
+      },
+      {
+        "group": "API - Workflow",
+        "pages": [
+          "api-reference/workflow/nodes",
+          "api-reference/workflow/sequence",
+          "api-reference/workflow/parallel",
+          "api-reference/workflow/decision",
+          "api-reference/workflow/shared-state",
+          "api-reference/workflow/validation",
+          "api-reference/workflow/type-checking",
+          "api-reference/workflow/agent-discovery"
+        ]
+      },
+      {
+        "group": "API - Messaging",
+        "pages": [
+          "api-reference/messaging/provider-thread",
+          "api-reference/messaging/message-types",
+          "api-reference/messaging/content-blocks",
+          "api-reference/messaging/usage"
+        ]
+      },
+      {
+        "group": "API - Accessors",
+        "pages": [
+          "api-reference/accessors/provider-accessor",
+          "api-reference/accessors/config-accessor",
+          "api-reference/accessors/thread-accessor",
+          "api-reference/accessors/history-accessor"
+        ]
+      },
+      {
+        "group": "API - Analytics",
+        "pages": [
+          "api-reference/analytics/context-explorer",
+          "api-reference/analytics/telemetry-engine",
+          "api-reference/analytics/workflow-reporting"
+        ]
+      },
+      {
+        "group": "API - Configuration",
+        "pages": [
+          "api-reference/configuration/egregore-config",
+          "api-reference/configuration/telemetry-config"
+        ]
+      },
+      {
+        "group": "Examples - Basic",
+        "pages": [
+          "examples/basic/hello-world",
+          "examples/basic/context-usage",
+          "examples/basic/tool-usage",
+          "examples/basic/streaming",
+          "examples/basic/event-streaming"
+        ]
+      },
+      {
+        "group": "Examples - Scaffolds",
+        "pages": [
+          "examples/scaffolds/internal-notes",
+          "examples/scaffolds/file-manager",
+          "examples/scaffolds/shell-scaffold",
+          "examples/scaffolds/custom-scaffold"
+        ]
+      },
+      {
+        "group": "Examples - Workflows",
+        "pages": [
+          "examples/workflows/simple-sequence",
+          "examples/workflows/parallel-execution",
+          "examples/workflows/decision-logic",
+          "examples/workflows/agent-orchestration",
+          "examples/workflows/complex-workflow"
+        ]
+      },
+      {
+        "group": "Examples - Hooks",
+        "pages": [
+          "examples/hooks/tool-hooks",
+          "examples/hooks/context-hooks",
+          "examples/hooks/message-editing",
+          "examples/hooks/subscribe-api"
+        ]
+      },
+      {
+        "group": "Examples - Advanced",
+        "pages": [
+          "examples/advanced/ttl-components",
+          "examples/advanced/render-lifecycle",
+          "examples/advanced/telemetry-integration",
+          "examples/advanced/context-debugging",
+          "examples/advanced/multi-turn-conversation"
+        ]
+      },
+      {
+        "group": "Examples - Real-World",
+        "pages": [
+          "examples/real-world/chatbot",
+          "examples/real-world/data-pipeline",
+          "examples/real-world/research-assistant",
+          "examples/real-world/code-reviewer"
+        ]
+      }
+    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/yourusername/egregore",
+      "x": "https://twitter.com/yourhandle"
     }
   }
 }

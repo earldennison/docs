@@ -1,0 +1,618 @@
+---
+title: Context History
+description: Snapshots, historical context access, and the ContextHistory system for temporal context management
+---
+
+# Context History
+
+The **ContextHistory** system provides snapshot-based access to historical context states. Think of it as "time travel" for your agent's memory - you can capture context at any point and access it later with full PACT compliance.
+
+## Why Context History?
+
+As conversations progress, the context tree continuously evolves through ODI shifting, component expiration, and new insertions. ContextHistory lets you:
+
+- **Capture snapshots** at critical moments (before tool calls, after important decisions)
+- **Access historical state** to understand how context changed over time
+- **Debug complex behaviors** by examining context at specific episodes
+- **Implement undo/redo** or rollback functionality
+
+<Info>
+  Every snapshot is **PACT v0.1 compliant** - you can serialize, store, and restore context states with full fidelity.
+</Info>
+
+## Core Concepts
+
+### Snapshots
+
+A **snapshot** is an immutable copy of context state at a specific episode:
+
+```python
+from egregore import Agent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Create a snapshot
+snapshot_id = agent.context.seal(trigger="before_tool_call")
+
+# snapshot_id is the episode number when snapshot was taken
+print(f"Snapshot captured at episode: {snapshot_id}")
+```
+
+### Historical Access
+
+Access past context states using the `agent.history` accessor:
+
+```python
+# Get context at episode 5
+historical_context = agent.history.at_snapshot(5)
+
+# Access components from that episode
+component = historical_context["d0, 1, 0"]
+print(f"Content: {component.content}")
+
+# Historical context is read-only
+# historical_context.pact_insert(...)  # Would raise error
+```
+
+### Snapshot Triggers
+
+Snapshots are typically created at key moments:
+
+- **Before tool execution** - Capture pre-call state
+- **After important decisions** - Save branching points
+- **Before context modifications** - Implement undo functionality
+- **At regular intervals** - Periodic checkpoints
+
+```python
+# Manual snapshot with descriptive trigger
+agent.context.seal(trigger="user_approved_action")
+
+# Automatic snapshots via hooks
+@agent.hooks.tool.pre_call
+def save_before_tool(ctx):
+    ctx.agent.context.seal(trigger=f"before_{ctx.tool_name}")
+```
+
+## Creating Snapshots
+
+### Using `context.seal()`
+
+The `seal()` method creates a snapshot and returns the episode number:
+
+```python
+from egregore import Agent
+from egregore.core.context_management.pact.components import TextContent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Add some context
+note = TextContent(content="Important data")
+agent.context.pact_insert("d0, 1, 0", note)
+
+# Create snapshot
+episode = agent.context.seal(trigger="checkpoint_1")
+print(f"Snapshot created at episode {episode}")
+
+# Continue modifying context
+agent.call("Hello!")
+agent.context.pact_delete("d0, 1, 0")  # Delete the note
+
+# Original snapshot still has the note
+historical = agent.history.at_snapshot(episode)
+restored_note = historical["d0, 1, 0"]
+print(f"Restored: {restored_note.content}")  # "Important data"
+```
+
+### Automatic Snapshot Creation
+
+Egregore creates snapshots automatically at key moments:
+
+```python
+# Snapshots are created:
+# 1. Before tool calls (if hooks enabled)
+# 2. At episode boundaries (configurable)
+# 3. When explicitly requested
+
+agent.call("What's the weather?")  # May auto-create snapshot
+
+# Check snapshot count
+print(f"Total snapshots: {len(agent.history.snapshots)}")
+```
+
+## Accessing Historical Context
+
+### The `history` Accessor
+
+The `agent.history` accessor provides methods for historical access:
+
+```python
+# Get context at specific episode
+context_at_5 = agent.history.at_snapshot(5)
+
+# List all snapshots
+snapshots = agent.history.snapshots
+for snap_id in snapshots:
+    print(f"Snapshot {snap_id}: {snapshots[snap_id]['trigger']}")
+
+# Get most recent snapshot
+latest = agent.history.at_snapshot(max(snapshots.keys()))
+```
+
+### Querying Historical Context
+
+Historical context supports all PACT selectors:
+
+```python
+historical = agent.history.at_snapshot(10)
+
+# Index access
+component = historical[0, 1, 0]
+
+# String selector
+component = historical["d0, 1, 0"]
+
+# Key-based access
+component = historical.get_by_key("user_pref")
+
+# Tag-based access
+components = historical.get_by_tags(["important"])
+```
+
+<Warning>
+  Historical context is **read-only**. You cannot insert, update, or delete components in historical snapshots.
+</Warning>
+
+## Snapshot Metadata
+
+Each snapshot stores metadata for debugging and tracking:
+
+```python
+snapshot_id = agent.context.seal(trigger="decision_point")
+
+# Access snapshot metadata
+snapshot_data = agent.history.snapshots[snapshot_id]
+print(f"Trigger: {snapshot_data['trigger']}")
+print(f"Episode: {snapshot_data['episode']}")
+print(f"Timestamp: {snapshot_data['created_at']}")
+
+# Full context state is preserved
+context_state = snapshot_data['context']
+```
+
+## PACT Compliance and Serialization
+
+### Serializing Snapshots
+
+All snapshots are PACT v0.1 compliant and fully serializable:
+
+```python
+import json
+
+# Create snapshot
+snapshot_id = agent.context.seal(trigger="save_point")
+
+# Get snapshot data
+snapshot_data = agent.history.snapshots[snapshot_id]
+
+# Serialize to JSON
+json_data = json.dumps(snapshot_data, indent=2)
+
+# Save to file
+with open(f"snapshot_{snapshot_id}.json", "w") as f:
+    f.write(json_data)
+```
+
+### Restoring from Snapshots
+
+While historical context is read-only, you can restore state by creating a new context:
+
+```python
+import json
+from egregore.core.context_management.pact.context.base import Context
+
+# Load snapshot
+with open("snapshot_5.json", "r") as f:
+    snapshot_data = json.load(f)
+
+# Create new context from snapshot
+restored_context = Context.from_snapshot(snapshot_data['context'])
+
+# Use restored context with agent
+agent.context = restored_context
+```
+
+<Note>
+  Restoring snapshots creates a **new context instance**. Use this carefully as it replaces the current context entirely.
+</Note>
+
+## Common Patterns
+
+### Checkpoint System
+
+Implement periodic checkpoints for long-running agents:
+
+```python
+from egregore import Agent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Create checkpoint every 10 interactions
+interaction_count = 0
+
+def process_message(message: str):
+    global interaction_count
+
+    # Process message
+    response = agent.call(message)
+    interaction_count += 1
+
+    # Checkpoint every 10 interactions
+    if interaction_count % 10 == 0:
+        snapshot_id = agent.context.seal(
+            trigger=f"checkpoint_every_10_{interaction_count}"
+        )
+        print(f"Checkpoint created: {snapshot_id}")
+
+    return response
+```
+
+### Undo/Redo Implementation
+
+Use snapshots to implement undo functionality:
+
+```python
+class UndoableAgent:
+    def __init__(self, agent):
+        self.agent = agent
+        self.undo_stack = []
+
+    def action(self, message: str):
+        # Save state before action
+        snapshot_id = self.agent.context.seal(trigger="before_action")
+        self.undo_stack.append(snapshot_id)
+
+        # Perform action
+        return self.agent.call(message)
+
+    def undo(self):
+        if not self.undo_stack:
+            return None
+
+        # Get last snapshot
+        snapshot_id = self.undo_stack.pop()
+        historical = self.agent.history.at_snapshot(snapshot_id)
+
+        # Restore context (create new instance)
+        self.agent.context = Context.from_snapshot(
+            historical.model_dump()
+        )
+
+        return snapshot_id
+
+# Usage
+undoable = UndoableAgent(agent)
+undoable.action("Hello!")
+undoable.action("What's 2+2?")
+undoable.undo()  # Revert to state before "What's 2+2?"
+```
+
+### Debugging Context Changes
+
+Track how context evolved between episodes:
+
+```python
+# Create snapshots at key points
+agent.context.seal(trigger="initial_state")
+agent.call("Add some data")
+agent.context.seal(trigger="after_data_added")
+agent.call("Modify data")
+agent.context.seal(trigger="after_modification")
+
+# Compare snapshots
+snapshot_ids = sorted(agent.history.snapshots.keys())
+for i in range(len(snapshot_ids) - 1):
+    before_id = snapshot_ids[i]
+    after_id = snapshot_ids[i + 1]
+
+    before = agent.history.at_snapshot(before_id)
+    after = agent.history.at_snapshot(after_id)
+
+    print(f"\nChanges from {before_id} to {after_id}:")
+    print(f"  Before trigger: {agent.history.snapshots[before_id]['trigger']}")
+    print(f"  After trigger: {agent.history.snapshots[after_id]['trigger']}")
+
+    # Compare component counts
+    before_count = len(list(before.nodes.keys()))
+    after_count = len(list(after.nodes.keys()))
+    print(f"  Components: {before_count} → {after_count}")
+```
+
+### Tool Call Auditing
+
+Capture context before/after tool execution for audit trails:
+
+```python
+@agent.hooks.tool.pre_call
+def snapshot_before_tool(ctx):
+    ctx.agent.context.seal(trigger=f"before_{ctx.tool_name}")
+
+@agent.hooks.tool.post_call
+def snapshot_after_tool(ctx):
+    ctx.agent.context.seal(trigger=f"after_{ctx.tool_name}")
+
+# Now every tool call has before/after snapshots
+agent.call("Use the calculator tool")
+
+# Access tool execution snapshots
+snapshots = agent.history.snapshots
+for snap_id, data in snapshots.items():
+    if "calculator" in data['trigger']:
+        print(f"Snapshot {snap_id}: {data['trigger']}")
+```
+
+## Integration with Other Systems
+
+### With MessageScheduler
+
+Snapshots capture episode numbers for correlation:
+
+```python
+# Current episode
+print(f"Current episode: {agent.context.current_episode}")
+
+# Create snapshot
+snapshot_id = agent.context.seal(trigger="test")
+
+# Snapshot ID matches episode number
+assert snapshot_id == agent.context.current_episode
+
+# Access snapshot by episode
+historical = agent.history.at_snapshot(snapshot_id)
+print(f"Historical episode: {historical.current_episode}")
+```
+
+### With ContextExplorer
+
+ContextExplorer can load historical snapshots for debugging:
+
+```python
+from egregore.analytics.context_explorer import ContextExplorer
+
+# Create snapshot
+snapshot_id = agent.context.seal(trigger="debug_point")
+
+# Load snapshot into explorer
+historical = agent.history.at_snapshot(snapshot_id)
+explorer = ContextExplorer(historical)
+
+# Visualize historical state
+explorer.print()
+
+# Cannot step through historical context (read-only)
+# explorer.step("render")  # Would raise error
+```
+
+### With Scaffolds
+
+Scaffolds can access historical context for retrospective analysis:
+
+```python
+from egregore.core.context_scaffolds.base import BaseContextScaffold
+
+class AuditScaffold(BaseContextScaffold):
+    scaffold_type = "audit"
+
+    def render(self):
+        # Compare current vs historical state
+        current_episode = self.agent.context.current_episode
+
+        if current_episode > 10:
+            # Look back 10 episodes
+            historical = self.agent.history.at_snapshot(current_episode - 10)
+
+            # Analyze changes
+            changes = self.analyze_changes(historical, self.agent.context)
+
+            return TextContent(
+                content=f"Changes in last 10 episodes: {changes}",
+                key="audit_report"
+            )
+
+    def analyze_changes(self, before, after):
+        # Compare component counts, TTL expirations, etc.
+        before_count = len(list(before.nodes.keys()))
+        after_count = len(list(after.nodes.keys()))
+        return f"{before_count} → {after_count} components"
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use descriptive trigger names">
+    Trigger names help identify snapshots later:
+
+    ```python
+    # Good: Descriptive triggers
+    agent.context.seal(trigger="user_approved_transaction")
+    agent.context.seal(trigger="before_critical_tool")
+
+    # Bad: Generic triggers
+    agent.context.seal(trigger="snapshot")
+    agent.context.seal(trigger="s1")
+    ```
+  </Accordion>
+
+  <Accordion title="Don't snapshot too frequently">
+    Snapshots consume memory. Create them at meaningful points only:
+
+    ```python
+    # Good: Strategic snapshots
+    agent.context.seal(trigger="before_tool")  # Before expensive operation
+
+    # Bad: Excessive snapshots
+    for i in range(100):
+        agent.context.seal(trigger=f"iteration_{i}")  # 100 snapshots!
+    ```
+  </Accordion>
+
+  <Accordion title="Serialize important snapshots">
+    Persist critical snapshots to disk for durability:
+
+    ```python
+    import json
+
+    snapshot_id = agent.context.seal(trigger="critical_state")
+    snapshot_data = agent.history.snapshots[snapshot_id]
+
+    with open(f"critical_{snapshot_id}.json", "w") as f:
+        json.dump(snapshot_data, f, indent=2)
+    ```
+  </Accordion>
+
+  <Accordion title="Use snapshots for testing">
+    Create test fixtures from known-good context states:
+
+    ```python
+    # Create test fixture
+    agent.call("Setup test data")
+    fixture_id = agent.context.seal(trigger="test_fixture")
+
+    # Save fixture
+    with open("test_fixture.json", "w") as f:
+        json.dump(
+            agent.history.snapshots[fixture_id],
+            f
+        )
+
+    # Load fixture in tests
+    def test_with_fixture():
+        with open("test_fixture.json") as f:
+            fixture = json.load(f)
+
+        context = Context.from_snapshot(fixture['context'])
+        agent = Agent(provider="openai:gpt-4", context=context)
+        # Test with known context state
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## API Reference
+
+### `context.seal(trigger: str) -> int`
+
+Create a snapshot of current context state.
+
+**Parameters:**
+- `trigger` (str): Descriptive name for this snapshot
+
+**Returns:**
+- `int`: Snapshot ID (same as current episode number)
+
+**Example:**
+```python
+snapshot_id = agent.context.seal(trigger="checkpoint")
+```
+
+### `history.at_snapshot(episode: int) -> Context`
+
+Access historical context at specific episode.
+
+**Parameters:**
+- `episode` (int): Episode number of snapshot
+
+**Returns:**
+- `Context`: Read-only context instance from that episode
+
+**Raises:**
+- `KeyError`: If snapshot doesn't exist at that episode
+
+**Example:**
+```python
+historical = agent.history.at_snapshot(5)
+```
+
+### `history.snapshots -> Dict[int, Dict]`
+
+Dictionary of all snapshots.
+
+**Returns:**
+- `Dict[int, Dict]`: Mapping of episode numbers to snapshot data
+
+**Snapshot data structure:**
+```python
+{
+    "episode": int,           # Episode number
+    "trigger": str,           # Trigger name
+    "created_at": float,      # Timestamp
+    "context": Dict           # PACT-compliant context state
+}
+```
+
+**Example:**
+```python
+for snap_id, data in agent.history.snapshots.items():
+    print(f"{snap_id}: {data['trigger']}")
+```
+
+## Limitations and Considerations
+
+<Warning>
+  **Memory Usage**: Each snapshot stores a full copy of context state. For long-running agents, consider:
+  - Periodic snapshot cleanup (delete old snapshots)
+  - Selective snapshotting (only at critical points)
+  - External storage (serialize and remove from memory)
+</Warning>
+
+### Read-Only Access
+
+Historical context is immutable:
+
+```python
+historical = agent.history.at_snapshot(5)
+
+# ❌ Cannot modify historical context
+# historical.pact_insert("d0, 1, 0", component)  # Raises error
+# historical.pact_update("d0, 1, 0", new_comp)   # Raises error
+# historical.pact_delete("d0, 1, 0")             # Raises error
+
+# ✅ Can read historical context
+component = historical["d0, 1, 0"]  # OK
+components = historical.get_by_tags(["tag"])  # OK
+```
+
+### Snapshot Lifecycle
+
+Snapshots persist for the agent's lifetime unless explicitly deleted:
+
+```python
+# Snapshots accumulate over time
+agent.call("Message 1")
+agent.context.seal(trigger="s1")
+agent.call("Message 2")
+agent.context.seal(trigger="s2")
+# ... 100 messages later ...
+# Still have s1 and s2 snapshots in memory
+
+# Clean up old snapshots manually
+del agent.history.snapshots[snapshot_id]
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Message Scheduler" icon="clock" href="/core-concepts/message-scheduler">
+    Understand episode management and rendering
+  </Card>
+
+  <Card title="Context Management" icon="database" href="/core-concepts/context-management">
+    Master context operations and component lifecycles
+  </Card>
+
+  <Card title="PACT Specification" icon="file-code" href="/architecture/pact-specification">
+    Deep dive into PACT v0.1 compliance
+  </Card>
+
+  <Card title="Context Debugging" icon="bug" href="/guides/advanced/context-debugging">
+    Debug context with ContextExplorer and snapshots
+  </Card>
+</CardGroup>

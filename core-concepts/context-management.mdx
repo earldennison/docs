@@ -1,0 +1,502 @@
+---
+title: Context Management
+description: Master context operations, component lifecycles, and TTL management in Egregore
+---
+
+# Context Management
+
+Context management in Egregore provides DOM-like manipulation of agent memory with powerful lifecycle controls. This page covers the fundamental operations for inserting, updating, deleting, and querying context components.
+
+## Core Operations
+
+### Inserting Components
+
+Use `pact_insert()` to add components at specific coordinates:
+
+```python
+from egregore.core.context_management.pact.components import TextContent
+
+# Insert at specific position
+component = TextContent(content="User prefers concise responses")
+context.pact_insert("d0, 1, 0", component)
+
+# Components can have keys for easy lookup
+tagged_component = TextContent(
+    content="Important metadata",
+    key="metadata",
+    tags=["user", "preferences"]
+)
+context.pact_insert("d0, 1, 1", tagged_component)
+```
+
+**Insert behavior:**
+- Creates component at exact coordinates
+- Shifts existing components if needed
+- Respects Core Offset Layout Rule
+
+### Updating Components
+
+Use `pact_update()` with different modes:
+
+```python
+# Replace mode: Replace component at exact position
+context.pact_update(
+    "d0, 1, 0",
+    updated_component,
+    mode="replace"
+)
+
+# Append mode: Add using offset rule (next available offset)
+context.pact_update(
+    "d0, 1",
+    new_component,
+    mode="append"
+)
+```
+
+<Info>
+  **Replace** overwrites at exact coordinates. **Append** finds the next available offset automatically.
+</Info>
+
+### Deleting Components
+
+Use `pact_delete()` to remove components:
+
+```python
+# Delete by coordinates
+context.pact_delete("d0, 1, 0")
+
+# Delete by key
+context.pact_delete(key="metadata")
+
+# Deleting core (offset 0) may trigger container reorganization
+context.pact_delete("d0, 0, 0")  # May affect entire container
+```
+
+<Warning>
+  Deleting the core (offset 0) may cause the entire container to be removed if it becomes empty.
+</Warning>
+
+### Querying Components
+
+Multiple ways to access components:
+
+```python
+# Index access (requires 2+ coordinates)
+component = context[0, 1]        # Depth 0, position 1
+component = context[0, 1, 0]     # Full 3-coordinate access
+
+# String selector
+component = context["d0, 1, 0"]
+
+# By key
+component = context.get_by_key("metadata")
+
+# By tags
+components = context.get_by_tags(["user", "important"])
+```
+
+## Component Lifecycle Types
+
+Egregore provides **four lifecycle types** based on TTL and cadence parameters:
+
+### 1. Permanent (`ttl=None`)
+
+Never expires - most common for message content and persistent metadata.
+
+```python
+# Permanent component
+note = TextContent(
+    content="User's name is Alice",
+    ttl=None  # or omit ttl parameter
+)
+context.pact_insert("d0, 1, 0", note)
+
+# Participates in ODI - moves with message history
+# (0,1,0) → (1,1,0) → (2,1,0) as messages are added
+```
+
+**Use cases:**
+- User preferences that shouldn't expire
+- Important metadata that needs to persist
+- Historical conversation context
+
+### 2. Temporary (`ttl=N`, no cadence)
+
+Expires after N turns, gone forever.
+
+```python
+# Temporary reminder - expires after 3 turns
+reminder = TextContent(
+    content="Ask about preferences in 3 turns",
+    ttl=3
+)
+context.pact_insert("d0, 1, 0", reminder)
+
+# Turn 1: age=0, still alive
+# Turn 2: age=1, still alive
+# Turn 3: age=2, still alive
+# Turn 4: age=3, EXPIRES and removed
+```
+
+**Use cases:**
+- Temporary reminders
+- Short-term task tracking
+- Contextual hints that expire
+
+### 3. Sticky (`ttl=1, cadence=1`)
+
+Expires and reappears each turn at the same relative coordinates. Follows parent through ODI.
+
+```python
+# Sticky component - always at same relative position
+sticky_note = TextContent(
+    content="Current task: Research",
+    ttl=1,
+    cadence=1
+)
+context.pact_insert("d0, 1, 0", sticky_note)
+
+# Every turn:
+# - Expires at current position
+# - Reappears at same relative coordinates
+# - Follows parent message through ODI movements
+```
+
+**Use cases:**
+- Current task/status indicators
+- Persistent UI-like elements
+- Context that needs to stay visible but refresh each turn
+
+### 4. Cyclic (`ttl=N, cadence=M`)
+
+Expires after N turns, reappears every M turns.
+
+```python
+# Cyclic reminder - appears every 5 turns
+cyclic = TextContent(
+    content="Check in with user",
+    ttl=2,       # Lives for 2 turns
+    cadence=5    # Reappears every 5 turns
+)
+context.pact_insert("d0, 1, 0", cyclic)
+
+# Turn 1-2: Visible
+# Turn 3: Expires, hidden
+# Turn 4-5: Hidden
+# Turn 6-7: Reappears, visible
+# Turn 8: Expires, hidden
+# And so on...
+```
+
+**Use cases:**
+- Periodic check-ins
+- Recurring reminders
+- Scheduled context injection
+
+## TTL Lifecycle Management
+
+### How TTL Works
+
+TTL (Time-To-Live) is managed by the MessageScheduler:
+
+1. **Episode advancement** - Each turn increments `current_episode`
+2. **Age calculation** - `age = current_episode - component.created_at_episode`
+3. **Expiration check** - If `age >= ttl`, component expires
+4. **Removal or rehydration** - Component removed or rehydrated based on cadence
+
+```python
+# Component lifecycle tracking
+component = TextContent(content="Expires in 3 turns", ttl=3)
+context.pact_insert("d0, 1, 0", component)
+
+# Internal tracking:
+# - created_at_episode = 10 (current episode)
+# - Episode 11: age=1, alive
+# - Episode 12: age=2, alive
+# - Episode 13: age=3, EXPIRES
+```
+
+### Cadence and Rehydration
+
+When a component has both TTL and cadence:
+
+```python
+# ttl=2, cadence=5
+component = TextContent(content="Cyclic", ttl=2, cadence=5)
+
+# Episode 0: Created, visible (age=0)
+# Episode 1: Visible (age=1)
+# Episode 2: EXPIRES (age=2 >= ttl)
+# Episode 3-4: Hidden
+# Episode 5: REHYDRATES (cadence triggers)
+# Episode 6: Visible (age=1 after rehydration)
+# Episode 7: EXPIRES (age=2)
+# Cycle repeats...
+```
+
+<Note>
+  Rehydration creates a **new component** with the same content at the same coordinates. The original component is permanently removed.
+</Note>
+
+## Message Container Pattern
+
+Egregore separates message content from context components:
+
+### Message Structure
+
+```
+Depth 0 (Active Message)
+├── Position 0 (Message Core) - d0,0,0
+│   ├── Offset 0: User/Assistant message text
+│   ├── Offset 1: Additional message content
+│   └── Offset -1: Alternative content
+└── Position 1+ (Components) - d0,1+,*
+    ├── d0,1,0: Metadata component
+    ├── d0,1,1: Another component
+    └── d0,2,0: Additional attachment
+```
+
+### Accessing Messages vs Components
+
+```python
+# Access message content
+message = context["d0, 0, 0"]  # Core message text
+
+# Access attached components
+metadata = context["d0, 1, 0"]
+notes = context["d0, 1, 1"]
+
+# Messages at position 0, components at position 1+
+```
+
+## Render Lifecycle System
+
+Advanced pattern for dynamic component positioning through stages.
+
+### Basic Render Lifecycle
+
+```python
+from egregore.core.context_management.pact.components import TextContent
+from egregore.core.context_management.pact.context.position import Pos
+
+# Component moves through 3 stages
+alert = TextContent(content="Important alert")
+alert.render_lifecycle([
+    Pos("d0, 0, 1", ttl=2),   # Stage 1: Offset +1 for 2 turns
+    Pos("d0, 0, -1", ttl=3),  # Stage 2: Offset -1 for 3 turns
+    Pos("d0, 0, -2")          # Stage 3: Offset -2 (permanent)
+])
+
+context.pact_insert("d0, 0, 1", alert)
+
+# Turn 1-2: At offset 1
+# Turn 3-5: Moves to offset -1
+# Turn 6+: Moves to offset -2 permanently
+```
+
+### Cycling Lifecycles
+
+```python
+# Infinite cycling between positions
+indicator = TextContent(content="Status")
+indicator.render_lifecycle([
+    Pos("d0, 0, 1", ttl=1),
+    Pos("d0, 0, -1", ttl=1)
+], cycle=True)  # Repeats forever
+
+# Limited cycles
+indicator.render_lifecycle([
+    Pos("d0, 0, 1", ttl=1),
+    Pos("d0, 0, -1", ttl=1)
+], cycle=3)  # Stops after 3 complete cycles
+```
+
+<Card title="Learn More" icon="arrows-spin" href="/architecture/render-lifecycle">
+  Complete render lifecycle documentation with advanced patterns
+</Card>
+
+## Context API Methods
+
+### Core Methods
+
+```python
+# Insert with shifting
+context.pact_insert(selector: str, component: ContextComponent)
+
+# Update existing
+context.pact_update(selector: str, component: ContextComponent, mode: str)
+
+# Delete component
+context.pact_delete(selector: str)
+
+# Query by coordinates
+component = context[depth, position, offset]
+
+# Query by key
+component = context.get_by_key(key: str)
+
+# Query by tags
+components = context.get_by_tags(tags: List[str])
+
+# Serialize to PACT format
+pact_dict = context.model_dump()
+```
+
+### Snapshot Management
+
+```python
+# Create snapshot
+snapshot_id = context.seal(trigger="checkpoint")
+
+# Access historical state (via agent.history)
+historical_context = agent.history.at_snapshot(snapshot_id)
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use appropriate lifecycle types">
+    - **Permanent** for most content (user info, preferences)
+    - **Temporary** for short-term reminders or hints
+    - **Sticky** for persistent status indicators
+    - **Cyclic** for periodic check-ins or scheduled tasks
+  </Accordion>
+
+  <Accordion title="Leverage keys and tags">
+    ```python
+    # Easy lookup and organization
+    component = TextContent(
+        content="Data",
+        key="user_prefs",
+        tags=["user", "important", "settings"]
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="Trust ODI for depth management">
+    Don't manually track position changes - ODI handles depth shifting automatically:
+    ```python
+    # Good: Reference by relative coordinates
+    metadata = context["d0, 1, 0"]
+
+    # Bad: Trying to manually track depth changes
+    # depth = calculate_current_depth()  # Don't do this!
+    ```
+  </Accordion>
+
+  <Accordion title="Use MessageContainer pattern">
+    Keep message content at position 0, components at position 1+:
+    ```python
+    # Messages at position 0
+    context.pact_insert("d0, 0, 0", message)
+
+    # Components at position 1+
+    context.pact_insert("d0, 1, 0", metadata)
+    context.pact_insert("d0, 2, 0", notes)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Patterns
+
+### User Preferences Storage
+
+```python
+# Permanent metadata attached to current context
+preferences = TextContent(
+    content="User prefers: formal tone, concise answers",
+    key="user_preferences",
+    tags=["user", "preferences"]
+)
+context.pact_insert("d0, 1, 0", preferences)
+
+# Automatically follows history via ODI
+```
+
+### Temporary Task Tracking
+
+```python
+# Task expires after 5 turns
+task = TextContent(
+    content="TODO: Follow up on research question",
+    ttl=5,
+    key="pending_task"
+)
+context.pact_insert("d0, 1, 0", task)
+```
+
+### Persistent Status Indicator
+
+```python
+# Always visible at same position
+status = TextContent(
+    content="Current Mode: Research",
+    ttl=1,
+    cadence=1,
+    key="current_mode"
+)
+context.pact_insert("d0, 1, 0", status)
+
+# Update status each turn by key
+new_status = TextContent(
+    content="Current Mode: Writing",
+    ttl=1,
+    cadence=1,
+    key="current_mode"
+)
+context.pact_update("d0, 1, 0", new_status, mode="replace")
+```
+
+### Scheduled Reminders
+
+```python
+# Check in every 10 turns
+reminder = TextContent(
+    content="Check if user needs help",
+    ttl=2,
+    cadence=10
+)
+context.pact_insert("d0, 1, 0", reminder)
+```
+
+## Debugging Context
+
+Use **ContextExplorer** for debugging:
+
+```python
+from egregore.analytics.context_explorer import ContextExplorer
+
+explorer = ContextExplorer(context)
+
+# Visualize current state
+explorer.print()
+
+# Advance episodes for TTL testing
+explorer.step("render")
+explorer.print()
+```
+
+<Card title="Learn More" icon="bug" href="/guides/advanced/context-debugging">
+  Complete guide to debugging context with ContextExplorer
+</Card>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Message Scheduler" icon="clock" href="/core-concepts/message-scheduler">
+    Understand episode management and TTL processing
+  </Card>
+
+  <Card title="Context History" icon="camera" href="/core-concepts/context-history">
+    Learn about snapshots and historical access
+  </Card>
+
+  <Card title="Context API Reference" icon="code" href="/api-reference/context/overview">
+    Complete API documentation for context operations
+  </Card>
+
+  <Card title="Render Lifecycle" icon="arrows-spin" href="/architecture/render-lifecycle">
+    Advanced component positioning patterns
+  </Card>
+</CardGroup>

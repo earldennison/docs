@@ -1,80 +1,285 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart Guide
+description: Get up and running with Egregore in 5 minutes
 ---
 
-## Get started in three steps
+# Quickstart Guide
 
-Get your documentation site running locally and make your first customization.
+Get started with Egregore in just a few minutes and create your first AI agent with PACT architecture.
 
-### Step 1: Set up your local environment
+## Installation
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<CodeGroup>
 
-### Step 2: Deploy your changes
+```bash pip
+pip install egregore
+```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+```bash poetry
+poetry add egregore
+```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+</CodeGroup>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+## Setup API Key
 
-### Step 3: Go live
+Egregore supports 30+ AI providers. Set up your preferred provider's API key:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+<CodeGroup>
 
-## Next steps
+```bash OpenAI
+export OPENAI_API_KEY="your-api-key-here"
+```
 
-Now that you have your docs running, explore these key features:
+```bash Anthropic
+export ANTHROPIC_API_KEY="your-api-key-here"
+```
+
+```bash Google
+export GOOGLE_API_KEY="your-api-key-here"
+```
+
+</CodeGroup>
+
+## Your First Agent
+
+Create a simple agent that maintains conversation history:
+
+```python
+from egregore import Agent
+
+# Create an agent with OpenAI's GPT-4
+agent = Agent(provider="openai:gpt-4")
+
+# Make your first call
+response = agent.call("Hello! What's the weather like?")
+print(response)
+
+# The agent maintains context automatically
+response = agent.call("What did I just ask you about?")
+print(response)  # Agent remembers the previous question
+```
+
+<Tip>
+The agent automatically manages context history using PACT's depth system. Previous messages are pushed back through ODI (Overlap Demotion Invariant) as new turns are added.
+</Tip>
+
+## Using Scaffolds for Memory
+
+Add persistent memory to your agent with the built-in notes scaffold:
+
+```python
+from egregore import Agent
+from egregore.core.context_scaffolds import InternalNotesScaffold
+
+# Create scaffold for persistent notes
+notes = InternalNotesScaffold()
+
+# Create agent with scaffold
+agent = Agent(
+    provider="openai:gpt-4",
+    scaffolds=[notes]
+)
+
+# The agent now has access to note-taking tools
+response = agent.call(
+    "Remember that my favorite color is blue. "
+    "Also, I prefer working in the mornings."
+)
+
+# Later in the conversation...
+response = agent.call("What do you know about my preferences?")
+# Agent can retrieve notes from its persistent memory
+```
+
+## Streaming Responses
+
+Get real-time responses as they're generated:
+
+```python
+from egregore import Agent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Stream the response
+for chunk in agent.stream("Write a poem about AI"):
+    print(chunk, end="", flush=True)
+```
+
+## Context Operations
+
+Manipulate context precisely using PACT coordinates:
+
+```python
+from egregore import Agent
+from egregore.core.context_management import TextContent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Insert a persistent reminder at system depth
+reminder = TextContent(content="Always be concise and helpful.")
+agent.context.pact_insert("d-1,0", reminder)
+
+# The reminder persists across all turns
+response = agent.call("Explain quantum computing")
+# Response will be concise due to the system-level reminder
+```
+
+## Using Tools
+
+Add custom tools to your agent:
+
+```python
+from egregore import Agent
+
+def get_weather(location: str) -> str:
+    """Get the current weather for a location."""
+    # In reality, you'd call a weather API
+    return f"The weather in {location} is sunny, 72°F"
+
+# Create agent with custom tool
+agent = Agent(
+    provider="openai:gpt-4",
+    tools=[get_weather]
+)
+
+# Agent can now use the weather tool
+response = agent.call("What's the weather in San Francisco?")
+print(response)
+```
+
+## Hooks for Observability
+
+Monitor and modify agent behavior with hooks:
+
+```python
+from egregore import Agent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Add a hook to log all tool calls
+@agent.hooks.tool.pre_call
+def log_tool_call(ctx):
+    print(f"🔧 Calling tool: {ctx.tool_name}")
+    print(f"   Parameters: {ctx.parameters}")
+
+@agent.hooks.tool.post_call
+def log_tool_result(ctx):
+    print(f"✅ Tool result: {ctx.tool_result}")
+
+# Tool calls will now be logged
+response = agent.call("What's the weather in NYC?")
+```
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core Concepts" icon="book" href="/core-concepts/overview">
+    Learn about PACT architecture
+  </Card>
+  <Card title="Context Management" icon="layer-group" href="/core-concepts/context-management">
+    Master the context tree
+  </Card>
+  <Card title="Scaffolds" icon="hammer" href="/features/scaffolds/overview">
+    Build persistent memory systems
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/features/workflows/overview">
+    Orchestrate multi-agent systems
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Common Patterns
+
+### Multi-turn Conversation
+
+```python
+agent = Agent(provider="openai:gpt-4")
+
+# Context is automatically managed
+agent.call("My name is Alice")
+agent.call("I like Python programming")
+agent.call("What do you know about me?")
+# Agent remembers: name and Python preference
+```
+
+### Temporary Context with TTL
+
+```python
+from egregore.core.context_management import TextContent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Add a reminder that expires after 3 turns
+reminder = TextContent(content="User is in a hurry", ttl=3)
+agent.context.pact_insert("d0,1", reminder)
+
+# Reminder available for 3 turns, then automatically removed
+```
+
+### Async Support
+
+```python
+import asyncio
+from egregore import Agent
+
+async def main():
+    agent = Agent(provider="openai:gpt-4")
+
+    # Async call
+    response = await agent.acall("Hello!")
+
+    # Async streaming
+    async for chunk in agent.astream("Tell me a story"):
+        print(chunk, end="", flush=True)
+
+asyncio.run(main())
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="ImportError: No module named 'egregore'">
+    Make sure you've installed the package:
+    ```bash
+    pip install egregore
+    ```
+  </Accordion>
+
+  <Accordion title="API Key Not Found">
+    Set your provider's API key as an environment variable:
+    ```bash
+    export OPENAI_API_KEY="your-key"
+    ```
+    Or pass it directly:
+    ```python
+    agent = Agent(provider="openai:gpt-4", api_key="your-key")
+    ```
+  </Accordion>
+
+  <Accordion title="Context Too Long Error">
+    Use TTL to manage context size:
+    ```python
+    # Components expire after N turns
+    component = TextContent(content="temp data", ttl=5)
+    agent.context.pact_insert("d0,1", component)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Resources
+
+- [Full API Reference](/api-reference/agent/overview)
+- [Example Gallery](/examples/basic/hello-world)
+- [PACT Specification](/architecture/pact-specification)
+- [GitHub Repository](https://github.com/yourusername/egregore)
+
+## What's Next?
+
+Now that you have a basic agent running, explore:
+
+1. **[Context Management](/core-concepts/context-management)** - Learn PACT coordinates and depth system
+2. **[Scaffolds](/features/scaffolds/overview)** - Build custom persistent memory systems
+3. **[Hooks](/features/hooks/overview)** - Add observability and custom logic
+4. **[Workflows](/features/workflows/overview)** - Orchestrate multiple agents
+
+Happy building! 🚀

@@ -1,0 +1,421 @@
+---
+title: PACT Architecture
+description: Understanding the Positioned Adaptive Context Tree - the foundation of Egregore's context management
+---
+
+# PACT Architecture
+
+**PACT (Positioned Adaptive Context Tree)** is the foundational architecture that powers Egregore's context management system. Think of it as a DOM for AI context - allowing you to precisely position, manipulate, and automatically adapt memory components as conversations evolve.
+
+## The Problem PACT Solves
+
+Traditional chat-based AI systems treat context as a flat append-only log:
+
+```python
+# Traditional approach - inefficient
+conversation = [
+    {"role": "user", "content": "What's the weather?"},
+    {"role": "assistant", "content": "I don't have access to weather data."},
+    {"role": "user", "content": "What did I just ask?"},
+    # LLM has to re-read EVERYTHING each time
+]
+```
+
+This creates several problems:
+- **No addressability**: Can't reference or modify specific parts of context
+- **Inefficient**: LLM re-processes entire history every turn
+- **No structure**: Flat lists don't represent hierarchical relationships
+- **Limited control**: Can't expire, move, or manage individual pieces
+
+PACT solves this with a tree structure and coordinate system.
+
+## The Three Pillars
+
+### 1. Positioned
+
+Every component has precise coordinates in 3D space:
+
+```python
+# PACT coordinates: (depth, position, offset)
+(0, 0, 0)    # Current message core
+(0, 1, 0)    # Component attached to current message
+(1, 0, 0)    # Previous message core
+(1, 1, -2)   # Component at historical message, offset -2
+```
+
+<Note>
+  Coordinates enable **infinite addressability** - you can reference any component precisely, just like DOM elements with IDs or CSS selectors.
+</Note>
+
+### 2. Adaptive
+
+Components automatically adjust positions as conversation grows through **ODI (Overlap Demotion Invariant)**:
+
+```python
+# Turn 1: Add a reminder
+context.pact_insert("d0, 1, 0", reminder)  # At current message
+
+# Turn 2: User sends new message
+# → ODI automatically shifts reminder from (0,1,0) to (1,1,0)
+# → Your code doesn't need to manually track positions!
+```
+
+### 3. Context Tree
+
+Hierarchical organization mirrors DOM structure:
+
+```
+Context Tree
+├── System (-1)
+│   └── System instructions
+├── Active Message (0)
+│   ├── Core (0,0,0) - Current user/assistant message
+│   ├── Component (0,1,0) - Attached metadata
+│   └── Component (0,1,1) - Additional annotations
+├── Previous Message (1)
+│   ├── Core (1,0,0)
+│   └── Components (1,1,*)
+└── Historical Messages (2, 3, 4...)
+```
+
+## PACT Coordinate System
+
+### Understanding Coordinates
+
+PACT uses **tuple coordinates** with three dimensions:
+
+```
+(depth, position, offset)
+   │       │        │
+   │       │        └─ Relative positioning within container
+   │       └────────── Attachment point (0=message, 1+=components)
+   └────────────────── Conversation turn (0=current, 1+=history)
+```
+
+### Depth: Conversation Timeline
+
+- **-1**: System level (static, never moves)
+- **0**: Current active message
+- **1, 2, 3...**: Historical messages (pushed back by ODI)
+
+```python
+# Depth examples
+context["d-1, 0, 0"]  # System instructions
+context["d0, 0, 0"]   # Current message
+context["d1, 0, 0"]   # Previous message
+context["d5, 0, 0"]   # 5 messages ago
+```
+
+### Position: Attachment Points
+
+- **0**: Message core content (user/assistant text)
+- **1+**: Components attached to the message
+- **1-**: Alternative component attachment (negative positions)
+
+```python
+# Position examples
+context["d0, 0, 0"]   # Current message content
+context["d0, 1, 0"]   # Component #1 attached to current message
+context["d0, 2, 0"]   # Component #2 attached to current message
+```
+
+### Offset: Fine-Grained Placement
+
+Relative positioning within a container:
+
+- **0**: Core/canvas position (always exists)
+- **1, 2, 3...**: Positive offsets
+- **-1, -2, -3...**: Negative offsets
+
+```python
+# Offset examples
+context["d0, 0, 0"]    # Core message
+context["d0, 0, 1"]    # Offset +1 from core
+context["d0, 0, -1"]   # Offset -1 from core
+context["d0, 1, -2"]   # Component at offset -2
+```
+
+## ODI: Overlap Demotion Invariant
+
+**The Magic of Automatic Adaptation**
+
+ODI is the system that automatically shifts components as conversations grow, maintaining their relative positions.
+
+### How ODI Works
+
+When a new message is added:
+
+1. Current message `(0,0,0)` becomes historical `(1,0,0)`
+2. **All permanent/sticky components** increment depth by 1
+3. New message takes position `(0,0,0)`
+
+```python
+# Turn 1: Add a note
+note = TextContent("User prefers formal tone")
+context.pact_insert("d0, 1, 0", note)
+
+# State: note is at (0,1,0) - attached to current message
+
+# Turn 2: User sends "Hello"
+agent.call("Hello")
+
+# ODI triggers:
+# - note moves from (0,1,0) → (1,1,0)
+# - "Hello" message is now at (0,0,0)
+# - note still attached to same message, just deeper in history
+```
+
+### ODI Rules
+
+<AccordionGroup>
+  <Accordion title="What triggers ODI?">
+    ODI triggers when message count changes between turns:
+    - Length increase → increment depths
+    - Length decrease → decrement depths
+    - Length same → no ODI processing
+  </Accordion>
+
+  <Accordion title="What components participate in ODI?">
+    - **Permanent components** (`ttl=None`)
+    - **Sticky components** (`ttl=1, cadence=1`)
+    - Components at depths ≥ 0
+
+    **Excluded from ODI:**
+    - System depth (-1) - always static
+    - Temporary/cyclic components (they expire instead)
+  </Accordion>
+
+  <Accordion title="Does ODI affect offset?">
+    No! ODI only changes **depth**, never position or offset. This preserves relative positioning within messages.
+
+    ```python
+    # Before ODI: (0, 1, -2)
+    # After ODI:  (1, 1, -2)  ← Only depth changed
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### ODI Example: Multi-Turn Conversation
+
+```python
+from egregore import Agent
+from egregore.core.context_management.pact.components import TextContent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Turn 1: Add metadata
+metadata = TextContent("Important context")
+agent.context.pact_insert("d0, 1, 0", metadata)
+# Position: (0, 1, 0)
+
+# Turn 2: User message
+agent.call("Hello")
+# ODI triggers → metadata moves to (1, 1, 0)
+
+# Turn 3: Another message
+agent.call("How are you?")
+# ODI triggers → metadata moves to (2, 1, 0)
+
+# Metadata stays attached to its original message
+# as that message moves deeper into history
+```
+
+## PACT Selectors
+
+CSS-like syntax for querying context components:
+
+```python
+# Get component by coordinates
+component = context["d0, 1, 0"]
+
+# Using selector strings
+component = context.select("d0, 1, 0")
+
+# Range queries
+components = context.select("d1-3, 1, *")  # All components at depths 1-3, position 1
+```
+
+<Card title="Learn More" icon="magnifying-glass" href="/reference/pact-selectors">
+  Complete PACT selector syntax reference
+</Card>
+
+## Message vs Component Positioning
+
+### Message Structure (`dN,0`)
+
+Message core content - permanent by default:
+
+```python
+# Messages live at position 0
+context["d0, 0, 0"]  # Current message
+context["d1, 0, 0"]  # Previous message
+context["d2, 0, 0"]  # 2 messages ago
+```
+
+**Characteristics:**
+- No TTL by default (permanent)
+- Automatically managed by MessageScheduler
+- Participate in ODI depth shifting
+
+### Component Structure (`dN,1+`)
+
+Components attached to messages - MAY have TTL:
+
+```python
+# Components at position 1+
+context["d0, 1, 0"]   # Component attached to current message
+context["d0, 2, 0"]   # Another component
+context["d1, 1, -1"]  # Component at historical message, offset -1
+```
+
+**Characteristics:**
+- Most are permanent (participate in ODI)
+- Can have TTL for automatic expiration
+- Can use render lifecycle for dynamic positioning
+
+## Core Offset Layout Rule
+
+**Offset 0 is special** - the core/canvas position that always exists:
+
+```python
+# Offset 0 = core/canvas
+context["d0, 0, 0"]  # Message core - always exists even if empty
+
+# Other offsets: -1, 1, -2, 2, etc.
+context["d0, 0, 1"]   # Offset +1
+context["d0, 0, -1"]  # Offset -1
+context["d0, 0, -2"]  # Offset -2
+```
+
+<Warning>
+  Deleting core (offset 0) may trigger container reorganization. If it empties the container, the entire container may cease to exist.
+</Warning>
+
+## PACT v0.1 Canonical Compliance
+
+All Context components inherit from `PACTNode` with canonical fields:
+
+```python
+class PACTNode(BaseModel):
+    id: str                    # Unique identifier
+    parent_id: Optional[str]   # Parent node ID
+    offset: int                # Relative offset
+    ttl: Optional[int]         # Time-to-live (None = permanent)
+    cad: Optional[int]         # Rehydration cadence
+    created_at_ns: int         # Creation timestamp (nanoseconds)
+    creation_index: int        # Order of creation
+    key: Optional[str]         # Optional key for lookup
+    tags: List[str]            # Metadata tags
+    content: Any               # Component content
+```
+
+### Automatic Serialization
+
+```python
+# Components serialize to PACT-compliant format
+component_dict = component.model_dump()
+
+# Context serializes entire tree
+context_dict = context.model_dump()
+
+# ContextHistory preserves PACT compliance
+snapshot = agent.context.seal(trigger="checkpoint")
+# Snapshot is fully PACT v0.1 compliant
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Descriptive Keys" icon="tag">
+    ```python
+    component = TextContent(
+        content="User preferences",
+        key="user_prefs"
+    )
+    ```
+  </Card>
+
+  <Card title="Leverage Tags" icon="tags">
+    ```python
+    component = TextContent(
+        content="Metadata",
+        tags=["metadata", "user", "important"]
+    )
+    ```
+  </Card>
+
+  <Card title="3-Coordinate Selectors" icon="location-dot">
+    ```python
+    # Use full coordinates
+    context.pact_insert("d0, 0, 1", component)
+    # Not: context.pact_insert("d0, 1", component)
+    ```
+  </Card>
+
+  <Card title="Trust ODI" icon="arrows-rotate">
+    ```python
+    # Don't manually track positions
+    # ODI handles it automatically
+    # Just reference by relative coordinates
+    ```
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+### Adding Persistent Metadata
+
+```python
+# Attach metadata that follows the message
+metadata = TextContent(
+    content="User from California",
+    key="location_metadata"
+)
+context.pact_insert("d0, 1, 0", metadata)
+
+# Metadata automatically moves with its message through ODI
+```
+
+### System-Level Instructions
+
+```python
+# System depth (-1) never participates in ODI
+system_note = TextContent(
+    content="Always be concise",
+    key="concise_instruction"
+)
+context.pact_insert("d-1, 1, 0", system_note)
+
+# Stays at depth -1 forever
+```
+
+### Temporary Reminders
+
+```python
+# Expires after 3 turns
+reminder = TextContent(
+    content="Ask about follow-up in 3 turns",
+    ttl=3
+)
+context.pact_insert("d0, 1, 0", reminder)
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Context Management" icon="database" href="/core-concepts/context-management">
+    Learn about context operations and component lifecycles
+  </Card>
+
+  <Card title="Message Scheduler" icon="clock" href="/core-concepts/message-scheduler">
+    Understand episode management and ODI processing
+  </Card>
+
+  <Card title="PACT Selectors" icon="magnifying-glass" href="/reference/pact-selectors">
+    Master selector syntax for querying components
+  </Card>
+
+  <Card title="Architecture Deep Dive" icon="diagram-project" href="/architecture/pact-specification">
+    Full PACT specification and internals
+  </Card>
+</CardGroup>

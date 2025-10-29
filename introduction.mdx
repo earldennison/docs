@@ -1,0 +1,136 @@
+---
+title: Introduction to Egregore
+description: A powerful AI agent framework built on PACT architecture that treats context like a DOM
+---
+
+# Introduction to Egregore
+
+**Putting the "Engineering" in Context Engineering**
+
+Egregore is an AI agent framework that revolutionizes how developers work with LLM context windows. Built on the PACT (Positioned Adaptive Context Tree) architecture, Egregore treats context like a DOM, enabling precise manipulation and control.
+
+## The Problem
+
+When OpenAI released ChatGPT and its API, they introduced the current primitives for context manipulation: the simple user/system/assistant chat log system. As developers built more sophisticated agents, they discovered this append-only structure has critical limitations:
+
+### Real-World Example
+
+Consider a typical CLI tool workflow:
+
+1. LLM reads file A (100 lines)
+2. LLM edits file A (now 112 lines)
+3. LLM does something else
+4. LLM tries to edit file A again → **fails** (doesn't know current structure)
+5. LLM re-reads the entire file
+6. LLM successfully updates the file
+
+This repetitive execution wastes tokens, pollutes the context window, and makes unnecessary API calls. **There had to be a better way.**
+
+## The Solution: PACT Architecture
+
+Egregore treats the context window like a **virtual DOM**. Instead of an append-only chat log, you get:
+
+- **Precise positioning** - Address any component with coordinates like `(0,1,0,-2,1)`
+- **Dynamic manipulation** - Insert, update, delete components anywhere
+- **Temporal management** - Components can expire after N turns or cycle periodically
+- **Stateful views** - LLMs maintain awareness of current state without re-reading
+
+<Tip>
+Think of it like HTML/CSS for your context window. You can query, position, and manipulate components with the same precision you'd use for DOM elements.
+</Tip>
+
+## Key Features
+
+### 🎯 PACT v0.1 Compliance
+Full specification compliance with automatic serialization. Context components inherit from `PACTNode` with canonical fields for universal addressability.
+
+### 🔄 Component Lifecycle System
+Four component types with TTL (Time To Live) and cadence:
+- **Permanent** - Never expire (default)
+- **Temporary** - Expire after N turns
+- **Sticky** - Expire and reappear at same position
+- **Cyclic** - Expire and reappear on intervals
+
+### 🏗️ Context Scaffolds
+Persistent agent memory and capabilities. Scaffolds auto-generate tools from methods using the `@operation` decorator and communicate through a formal IPC system.
+
+### 🪝 Comprehensive Hook System
+Decorator-based lifecycle hooks for:
+- Tool execution (pre_call, post_call, on_error)
+- Context operations (before_change, after_change)
+- Streaming (on_chunk)
+- Messages (on_user_msg, on_provider_msg)
+- Scaffolds (on_state_change)
+
+### 🔌 Universal Provider Interface
+30+ AI providers with standardized API:
+- OpenAI, Anthropic, Google, Mistral, Groq, and more
+- Universal token counting
+- OAuth interceptors for premium models
+- 3-tier parameter processing
+
+### 🌊 Workflow System
+Node-based execution with:
+- Native agent discovery
+- Parallel processing
+- Decision nodes
+- Type checking and validation
+- Dictionary-based result aggregation
+
+### 📊 Telemetry & Analytics
+Built-in observability:
+- Context snapshots
+- Component change tracking
+- Tool execution monitoring
+- JSONL export for analysis
+
+## The Egregore Advantage
+
+1. **More Steerable LLMs** - Precise control over what the model sees and when
+2. **Token Efficiency** - No redundant re-reading of content
+3. **Context Hygiene** - Expire unnecessary components automatically
+4. **Stateful Views** - Maintain "viewports" for dynamic data
+5. **Reactive Updates** - Scaffolds automatically re-render on context changes
+
+## Architecture Overview
+
+```
+Agent
+  ├── Context (PACT Tree)
+  │   ├── SystemHeader (depth -1)
+  │   ├── ActiveMessage (depth 0)
+  │   └── History (depth 1+)
+  │
+  ├── Scaffolds (Persistent Memory)
+  │   ├── InternalNotes
+  │   ├── FileManager
+  │   └── Custom Scaffolds
+  │
+  ├── Tools (Auto-generated)
+  ├── Hooks (Lifecycle Observers)
+  └── Provider (30+ AI Models)
+```
+
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/core-concepts/overview">
+    Learn the fundamentals of PACT
+  </Card>
+  <Card title="Examples" icon="code" href="/examples/basic/hello-world">
+    See working code samples
+  </Card>
+  <Card title="API Reference" icon="terminal" href="/api-reference/agent/overview">
+    Complete API documentation
+  </Card>
+</CardGroup>
+
+## Version
+
+Current version: **v0.3.5a3**
+
+Last updated: October 2024

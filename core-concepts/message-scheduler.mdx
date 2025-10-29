@@ -1,0 +1,494 @@
+---
+title: Message Scheduler
+description: Understanding episode management, TTL processing, and the render lifecycle system
+---
+
+# Message Scheduler
+
+The **MessageScheduler** is Egregore's core rendering and episode management system. It coordinates context updates, processes component lifecycles, and manages the temporal flow of conversation turns.
+
+## Core Responsibilities
+
+The MessageScheduler handles four critical operations:
+
+1. **Episode Advancement** - Increments conversation turns and updates temporal state
+2. **TTL Processing** - Expires components based on time-to-live settings
+3. **ODI Coordination** - Triggers depth shifting when message history changes
+4. **Render Lifecycle** - Manages dynamic component positioning through stages
+
+<Info>
+  Think of MessageScheduler as the "game loop" for your agent's context - it advances time, processes expirations, and keeps the context tree synchronized.
+</Info>
+
+## Episode Management
+
+### What is an Episode?
+
+An **episode** represents a single turn in the conversation. Each time the agent processes input or generates output, the episode number increments.
+
+```python
+from egregore import Agent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Episode 0: Initial state
+print(f"Episode: {agent.context.current_episode}")  # 0
+
+# Episode 1: User message
+agent.call("Hello!")
+print(f"Episode: {agent.context.current_episode}")  # 1
+
+# Episode 2: Another interaction
+agent.call("How are you?")
+print(f"Episode: {agent.context.current_episode}")  # 2
+```
+
+### Episode Advancement Flow
+
+When a new message is processed:
+
+```
+1. MessageScheduler.render() called
+   ↓
+2. current_episode increments
+   ↓
+3. TTL processing runs (check expirations)
+   ↓
+4. Render lifecycle transitions processed
+   ↓
+5. ODI depth shifting (if message count changed)
+   ↓
+6. Context ready for next interaction
+```
+
+<Note>
+  Episode advancement happens **automatically** during agent calls. You rarely need to manually trigger it.
+</Note>
+
+## TTL Processing
+
+### Expiration Algorithm
+
+The MessageScheduler calculates component age and expires components based on TTL:
+
+```python
+# Expiration formula
+age = current_episode - component.created_at_episode
+
+if age >= component.ttl:
+    # Component expires
+    if component.cadence:
+        # Rehydrate with new TTL
+        rehydrate_component(component)
+    else:
+        # Remove permanently
+        remove_component(component)
+```
+
+### Example: TTL Lifecycle
+
+```python
+from egregore import Agent
+from egregore.core.context_management.pact.components import TextContent
+
+agent = Agent(provider="openai:gpt-4")
+
+# Episode 0: Create temporary component (ttl=3)
+reminder = TextContent(
+    content="Remember to ask about preferences",
+    ttl=3
+)
+agent.context.pact_insert("d0, 1, 0", reminder)
+print(f"Created at episode: {agent.context.current_episode}")  # 0
+
+# Episode 1: age=1, still alive
+agent.call("Hello")
+print(f"Component age: 1, TTL: 3 - ALIVE")
+
+# Episode 2: age=2, still alive
+agent.call("How are you?")
+print(f"Component age: 2, TTL: 3 - ALIVE")
+
+# Episode 3: age=3, EXPIRES
+agent.call("What's the weather?")
+print(f"Component age: 3, TTL: 3 - EXPIRED")
+# Component automatically removed by MessageScheduler
+```
+
+### TTL Processing Order
+
+Components are processed in **creation order** to ensure predictable behavior:
+
+1. Sort components by `creation_index` (ascending)
+2. Calculate age for each component
+3. Expire components where `age >= ttl`
+4. Process rehydration for components with cadence
+5. Remove expired components without cadence
+
+<Warning>
+  TTL processing happens **before** render lifecycle transitions. This ensures expired components don't move to new stages.
+</Warning>
+
+## Cadence and Rehydration
+
+### How Cadence Works
+
+Components with both TTL and cadence expire and reappear on a schedule:
+
+```python
+# Create cyclic component (ttl=2, cadence=5)
+cyclic = TextContent(
+    content="Check in with user",
+    ttl=2,
+    cadence=5
+)
+agent.context.pact_insert("d0, 1, 0", cyclic)
+
+# Episode flow:
+# 0-1:   Visible (age 0-1)
+# 2:     EXPIRES (age=2 >= ttl)
+# 3-4:   Hidden (waiting for cadence)
+# 5:     REHYDRATES (episode % cadence == 0)
+# 6-7:   Visible (age 0-1 after rehydration)
+# 8:     EXPIRES again
+# Cycle repeats...
+```
+
+### Rehydration Mechanics
+
+When a component rehydrates:
+
+1. **New component created** with same content
+2. **Same coordinates** as original placement
+3. **Fresh TTL countdown** starts
+4. **Original component permanently removed**
+
+```python
+# Rehydration creates a new component
+original_id = cyclic.id  # "abc123"
+
+# After rehydration at episode 5
+rehydrated = agent.context["d0, 1, 0"]
+print(rehydrated.id)  # "def456" - different ID
+print(rehydrated.created_at_episode)  # 5 - fresh timestamp
+print(rehydrated.content)  # "Check in with user" - same content
+```
+
+<Info>
+  Rehydration is **not** component resurrection - it's creating a new component with the same properties at the same location.
+</Info>
+
+## Render Lifecycle Management
+
+### Stage Transitions
+
+The MessageScheduler processes render lifecycle stage transitions during each episode:
+
+```python
+from egregore.core.context_management.pact.context.position import Pos
+
+# Component moves through 3 stages
+alert = TextContent(content="Important alert")
+alert.render_lifecycle([
+    Pos("d0, 0, 1", ttl=2),   # Stage 1: 2 turns
+    Pos("d0, 0, -1", ttl=3),  # Stage 2: 3 turns
+    Pos("d0, 0, -2")          # Stage 3: permanent
+])
+
+agent.context.pact_insert("d0, 0, 1", alert)
+
+# Turn 1-2: At offset 1 (stage 1, age 0-1)
+# Turn 3: Expires, transitions to stage 2 at offset -1
+# Turn 4-6: At offset -1 (stage 2, age 0-2)
+# Turn 7: Expires, transitions to stage 3 at offset -2
+# Turn 8+: At offset -2 permanently
+```
+
+### Transition Processing
+
+During `render()`, the scheduler:
+
+1. Checks each component's render lifecycle
+2. If TTL expired and more stages exist:
+   - Remove component from current position
+   - Advance to next stage
+   - Insert at new position with new TTL
+3. If TTL expired and no more stages:
+   - Remove component permanently
+
+<Note>
+  Render lifecycle transitions happen **after** TTL processing but **before** ODI shifting.
+</Note>
+
+## ODI Coordination
+
+### When ODI Triggers
+
+The MessageScheduler triggers ODI (Overlap Demotion Invariant) when message history changes:
+
+```python
+# ODI triggers when message count changes
+previous_length = len(agent.thread.current.all_messages)
+agent.call("New message")
+current_length = len(agent.thread.current.all_messages)
+
+if current_length != previous_length:
+    # ODI triggers - all permanent/sticky components shift depth
+    depth_delta = current_length - previous_length
+    # Components at (0,1,0) move to (1,1,0), etc.
+```
+
+### ODI Processing Flow
+
+```
+1. Calculate message count delta
+   ↓
+2. Find all ODI-eligible components:
+   - Permanent (ttl=None)
+   - Sticky (ttl=1, cadence=1)
+   - At depths ≥ 0
+   ↓
+3. Update depth for each component:
+   new_depth = old_depth + delta
+   ↓
+4. Re-index depth arrays
+   ↓
+5. Context tree updated
+```
+
+<Card title="Learn More" icon="arrows-rotate" href="/architecture/odi-system">
+  Deep dive into ODI mechanics and spatial conflict resolution
+</Card>
+
+## MessageScheduler API
+
+### Manual Episode Advancement
+
+Most of the time, episode advancement is automatic. But for testing or advanced use cases:
+
+```python
+from egregore.core.context_management.scheduler import MessageScheduler
+
+# Access the scheduler
+scheduler = agent.scheduler
+
+# Manual render (advances episode + processes TTL/lifecycle/ODI)
+scheduler.render()
+
+# Check current episode
+print(f"Current episode: {agent.context.current_episode}")
+```
+
+### Render Modes
+
+The scheduler supports different render modes:
+
+```python
+# Full render (default)
+scheduler.render()  # Episode advancement + full processing
+
+# TTL-only render
+scheduler.render_ttl()  # Only process expirations, no episode advance
+
+# Lifecycle-only render
+scheduler.render_lifecycle()  # Only process stage transitions
+```
+
+<Warning>
+  Manual render calls should be rare. Let the agent system handle episode advancement automatically during normal operation.
+</Warning>
+
+## Integration with Context Operations
+
+### Automatic Scheduling
+
+Context operations automatically interact with the scheduler:
+
+```python
+# pact_insert triggers validation
+agent.context.pact_insert("d0, 1, 0", component)
+# - Component gets created_at_episode = current_episode
+# - Component registered for TTL processing
+
+# agent.call() triggers render
+agent.call("Hello")
+# - scheduler.render() called automatically
+# - Episode advances
+# - TTL processing runs
+# - ODI shifts depths if needed
+```
+
+### Component Creation Tracking
+
+Every component tracks its creation episode:
+
+```python
+component = TextContent(content="Test", ttl=3)
+agent.context.pact_insert("d0, 1, 0", component)
+
+print(component.created_at_episode)  # Current episode number
+print(component.creation_index)  # Unique creation order
+```
+
+This enables accurate age calculation during TTL processing.
+
+## Debugging with ContextExplorer
+
+### Simulating Episode Advancement
+
+Use ContextExplorer to test TTL behavior:
+
+```python
+from egregore.analytics.context_explorer import ContextExplorer
+
+explorer = ContextExplorer(agent.context)
+
+# Add TTL component
+component = TextContent(content="Test", ttl=2)
+explorer.context.pact_insert("d0, 1, 0", component)
+print(f"Episode {explorer.context.current_episode}: Component created")
+explorer.print()
+
+# Advance episode manually
+explorer.step("render")
+print(f"Episode {explorer.context.current_episode}: age=1")
+explorer.print()
+
+# Advance again - component expires
+explorer.step("render")
+print(f"Episode {explorer.context.current_episode}: EXPIRED")
+explorer.print()  # Component gone
+```
+
+<Card title="Learn More" icon="bug" href="/guides/advanced/context-debugging">
+  Complete guide to debugging with ContextExplorer
+</Card>
+
+### Monitoring TTL Lifecycle
+
+```python
+# Track component lifecycle
+explorer = ContextExplorer(agent.context)
+
+# Create cyclic component
+cyclic = TextContent(content="Periodic", ttl=2, cadence=5)
+explorer.context.pact_insert("d0, 1, 0", cyclic)
+
+# Advance through full cycle
+for episode in range(10):
+    explorer.step("render")
+    print(f"Episode {explorer.context.current_episode}:")
+
+    # Check if component exists
+    try:
+        comp = explorer.context["d0, 1, 0"]
+        print(f"  ✓ Component present (age={explorer.context.current_episode - comp.created_at_episode})")
+    except:
+        print(f"  ✗ Component hidden")
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Let the scheduler handle episodes">
+    Don't manually increment `current_episode`. Use `agent.call()` or `scheduler.render()` to advance episodes properly.
+
+    ```python
+    # Good: Automatic episode advancement
+    agent.call("Hello")
+
+    # Bad: Manual episode increment
+    agent.context.current_episode += 1  # Don't do this!
+    ```
+  </Accordion>
+
+  <Accordion title="Test TTL behavior with ContextExplorer">
+    Always use ContextExplorer to validate TTL component behavior before production use.
+
+    ```python
+    explorer = ContextExplorer(agent.context)
+    explorer.step("render")  # Proper episode advancement
+    explorer.print()  # Visualize state
+    ```
+  </Accordion>
+
+  <Accordion title="Understand render order">
+    Processing order matters:
+    1. Episode advances
+    2. TTL expirations processed
+    3. Render lifecycle transitions
+    4. ODI depth shifting
+
+    Components expire before moving to new stages.
+  </Accordion>
+
+  <Accordion title="Use appropriate TTL values">
+    - **Short TTL (1-3)**: Temporary alerts, immediate reminders
+    - **Medium TTL (5-10)**: Task tracking, session-level context
+    - **Long TTL (20+)**: Periodic check-ins, recurring reminders
+    - **No TTL**: Permanent metadata, user preferences
+  </Accordion>
+</AccordionGroup>
+
+## Common Patterns
+
+### Session-Based Components
+
+```python
+# Component expires after 5 interactions
+session_data = TextContent(
+    content="User mentioned preference for formal tone",
+    ttl=5,
+    key="session_preference"
+)
+agent.context.pact_insert("d0, 1, 0", session_data)
+
+# Automatically removed after 5 turns
+```
+
+### Periodic Reminders
+
+```python
+# Reminder appears every 10 turns for 2 turns
+reminder = TextContent(
+    content="Check if user needs help",
+    ttl=2,
+    cadence=10
+)
+agent.context.pact_insert("d0, 1, 0", reminder)
+
+# Visible: episodes 0-1, 10-11, 20-21, ...
+```
+
+### Progressive Degradation
+
+```python
+# Alert moves through positions as urgency decreases
+alert = TextContent(content="Important task pending")
+alert.render_lifecycle([
+    Pos("d0, 0, 1", ttl=3),   # High priority: offset 1 for 3 turns
+    Pos("d0, 0, -1", ttl=5),  # Medium priority: offset -1 for 5 turns
+    Pos("d0, 0, -3")          # Low priority: offset -3 permanently
+])
+agent.context.pact_insert("d0, 0, 1", alert)
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Context History" icon="camera" href="/core-concepts/context-history">
+    Learn about snapshots and historical context access
+  </Card>
+
+  <Card title="TTL Lifecycle" icon="clock" href="/architecture/ttl-lifecycle">
+    Deep dive into TTL processing internals
+  </Card>
+
+  <Card title="ODI System" icon="arrows-rotate" href="/architecture/odi-system">
+    Understand depth shifting mechanics
+  </Card>
+
+  <Card title="Render Lifecycle" icon="arrows-spin" href="/architecture/render-lifecycle">
+    Advanced component positioning patterns
+  </Card>
+</CardGroup>
