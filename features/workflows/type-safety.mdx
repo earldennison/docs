@@ -1,0 +1,697 @@
+---
+title: Type Safety
+description: Optional type checking for workflows with compile-time validation
+---
+
+# Type Safety
+
+**Type checking** provides optional compile-time validation to catch type mismatches when composing workflows.
+
+## Core Concept
+
+The type checking system analyzes function signatures and validates type compatibility between chained nodes:
+
+```python
+from egregore.core.workflow import node, Sequence
+
+@node("processor")
+def processor(data: dict) -> dict:
+    """Returns dict."""
+    return {"processed": data}
+
+@node("counter")
+def counter(data: dict) -> int:
+    """Expects dict, returns int."""
+    return len(data)
+
+@node("formatter")
+def formatter(number: int) -> str:
+    """Expects int, returns str."""
+    return f"Count: {number}"
+
+# Type checker validates this chain automatically
+workflow = Sequence(
+    processor,   # dict -> dict
+    counter,     # dict -> int
+    formatter    # int -> str
+)
+# All type transitions are valid
+```
+
+## Type Checking Modes
+
+### Warning Mode (Default)
+
+Logs warnings but allows execution:
+
+```python
+from egregore.core.workflow import set_type_checking_mode
+
+# Default: warning mode
+set_type_checking_mode(strict=False)
+
+@node("returns_dict")
+def returns_dict(data: str) -> dict:
+    return {"data": data}
+
+@node("expects_int")
+def expects_int(data: int) -> str:
+    return str(data)
+
+# Type mismatch: dict -> int
+workflow = Sequence(returns_dict, expects_int)
+# WARNING: Type mismatch: returns_dict returns dict but expects_int expects int
+
+# Workflow still executes (may fail at runtime)
+```
+
+### Strict Mode
+
+Raises exceptions on type mismatches:
+
+```python
+# Enable strict mode
+set_type_checking_mode(strict=True)
+
+# Type mismatch raises TypeError immediately
+try:
+    workflow = Sequence(returns_dict, expects_int)
+except TypeError as e:
+    print(f"Type error: {e}")
+    # TypeError: Type mismatch: returns_dict returns dict but expects_int expects int
+```
+
+## Type Compatibility
+
+### Compatible Types
+
+**Exact matches**:
+```python
+@node("processor")
+def processor(data: dict) -> dict:
+    return data
+
+@node("validator")
+def validator(data: dict) -> bool:
+    return bool(data)
+
+# dict -> dict: Compatible
+workflow = Sequence(processor, validator)
+```
+
+**Inheritance**:
+```python
+class Animal:
+    pass
+
+class Dog(Animal):
+    pass
+
+@node("get_dog")
+def get_dog() -> Dog:
+    return Dog()
+
+@node("process_animal")
+def process_animal(animal: Animal) -> str:
+    return "Processed"
+
+# Dog -> Animal: Compatible (Dog is subclass of Animal)
+workflow = Sequence(get_dog, process_animal)
+```
+
+**Any type**:
+```python
+from typing import Any
+
+@node("returns_any")
+def returns_any(data) -> Any:
+    return data
+
+@node("expects_str")
+def expects_str(data: str) -> int:
+    return len(data)
+
+# Any -> str: Compatible (Any matches everything)
+workflow = Sequence(returns_any, expects_str)
+```
+
+**Optional types**:
+```python
+from typing import Optional
+
+@node("maybe_dict")
+def maybe_dict(data: str) -> Optional[dict]:
+    return {"data": data} if data else None
+
+@node("flexible")
+def flexible(data: Optional[dict]) -> str:
+    return str(data)
+
+# Optional[dict] -> Optional[dict]: Compatible
+workflow = Sequence(maybe_dict, flexible)
+```
+
+### Incompatible Types
+
+**Type mismatches**:
+```python
+@node("returns_str")
+def returns_str() -> str:
+    return "hello"
+
+@node("expects_int")
+def expects_int(value: int) -> str:
+    return str(value * 2)
+
+# str -> int: INCOMPATIBLE
+workflow = Sequence(returns_str, expects_int)
+# WARNING/ERROR: Type mismatch
+```
+
+**Container mismatches**:
+```python
+from typing import List, Dict
+
+@node("returns_list")
+def returns_list() -> List[str]:
+    return ["a", "b", "c"]
+
+@node("expects_dict")
+def expects_dict(data: Dict[str, int]) -> int:
+    return len(data)
+
+# List[str] -> Dict[str, int]: INCOMPATIBLE
+workflow = Sequence(returns_list, expects_dict)
+```
+
+## Type Checking API
+
+### set_type_checking_mode()
+
+Configure global type checking behavior:
+
+```python
+from egregore.core.workflow import set_type_checking_mode
+
+# Warning mode (default)
+set_type_checking_mode(strict=False)
+
+# Strict mode
+set_type_checking_mode(strict=True)
+```
+
+### get_type_checker()
+
+Access the global type checker:
+
+```python
+from egregore.core.workflow import get_type_checker
+
+checker = get_type_checker()
+
+# Check if checker is in strict mode
+print(f"Strict mode: {checker.strict_mode}")
+```
+
+### check_node_chain_types()
+
+Manually check node compatibility:
+
+```python
+from egregore.core.workflow import check_node_chain_types
+
+@node("node_a")
+def node_a() -> dict:
+    return {}
+
+@node("node_b")
+def node_b(data: dict) -> str:
+    return str(data)
+
+# Manually check compatibility
+is_compatible = check_node_chain_types(node_a, node_b)
+print(f"Compatible: {is_compatible}")  # True
+```
+
+## Type Signatures
+
+### NodeTypeSignature
+
+Represents a node's type signature:
+
+```python
+from egregore.core.workflow.type_checking import NodeTypeExtractor
+
+@node("example")
+def example(data: dict, count: int) -> str:
+    return str(data) * count
+
+# Extract signature
+signature = NodeTypeExtractor.extract_signature(example)
+
+print(signature.node_name)        # "example"
+print(signature.input_types)      # {"data": TypeInfo(dict), "count": TypeInfo(int)}
+print(signature.return_type)      # TypeInfo(str)
+print(signature.has_varargs)      # False
+print(signature.has_kwargs)       # False
+```
+
+### TypeInfo
+
+Represents type information:
+
+```python
+from egregore.core.workflow.type_checking import TypeInfo
+from typing import Optional, Any
+
+# Simple type
+type_info = TypeInfo(type_annotation=str)
+print(type_info.is_optional)  # False
+print(type_info.is_any)       # False
+
+# Optional type
+optional_info = TypeInfo(type_annotation=str, is_optional=True)
+print(optional_info)  # "Optional[str]"
+
+# Any type
+any_info = TypeInfo(type_annotation=Any, is_any=True)
+print(any_info)  # "Any"
+```
+
+## Development Workflow
+
+### Type Hints Best Practices
+
+**Always use type hints**:
+```python
+# Good: Type hints on parameters and return
+@node("processor")
+def processor(data: dict) -> dict:
+    return {"processed": data}
+
+# Bad: No type hints (type checker can't help)
+@node("processor")
+def processor(data):
+    return {"processed": data}
+```
+
+**Be specific with container types**:
+```python
+from typing import List, Dict
+
+# Good: Specific container types
+@node("process_items")
+def process_items(items: List[str]) -> Dict[str, int]:
+    return {item: len(item) for item in items}
+
+# Less helpful: Generic containers
+@node("process_items")
+def process_items(items: list) -> dict:
+    return {item: len(item) for item in items}
+```
+
+**Use Optional for nullable values**:
+```python
+from typing import Optional
+
+# Good: Explicit Optional
+@node("find_item")
+def find_item(items: List[str], target: str) -> Optional[str]:
+    return target if target in items else None
+
+# Bad: Implicit None return
+@node("find_item")
+def find_item(items: List[str], target: str) -> str:
+    return target if target in items else None  # May return None!
+```
+
+### Development vs Production
+
+**Strict mode in development**:
+```python
+import os
+
+if os.getenv("ENV") == "development":
+    # Strict mode: catch issues early
+    set_type_checking_mode(strict=True)
+else:
+    # Warning mode: log issues but don't crash
+    set_type_checking_mode(strict=False)
+
+# Build workflow
+workflow = Sequence(node1, node2, node3)
+```
+
+**Testing type safety**:
+```python
+def test_workflow_types():
+    """Test workflow has correct types."""
+    # Enable strict mode for tests
+    set_type_checking_mode(strict=True)
+
+    # This should not raise if types are correct
+    workflow = create_production_workflow()
+
+    # Reset to default
+    set_type_checking_mode(strict=False)
+```
+
+## Advanced Type Checking
+
+### Varargs and Kwargs
+
+Nodes with flexible signatures are always compatible:
+
+```python
+@node("flexible")
+def flexible(*args, **kwargs) -> dict:
+    """Accepts any arguments."""
+    return {"args": args, "kwargs": kwargs}
+
+@node("returns_anything")
+def returns_anything() -> str:
+    return "anything"
+
+# str -> *args, **kwargs: Compatible
+workflow = Sequence(returns_anything, flexible)
+```
+
+### Union Types
+
+Union types provide multiple valid types:
+
+```python
+from typing import Union
+
+@node("process")
+def process(data: Union[str, int]) -> str:
+    """Accepts str OR int."""
+    return str(data)
+
+@node("returns_str")
+def returns_str() -> str:
+    return "hello"
+
+@node("returns_int")
+def returns_int() -> int:
+    return 42
+
+# Both compatible with Union[str, int]
+workflow1 = Sequence(returns_str, process)  # str -> Union[str, int]: OK
+workflow2 = Sequence(returns_int, process)  # int -> Union[str, int]: OK
+```
+
+### Generic Types
+
+Generic types are checked for compatibility:
+
+```python
+from typing import List, Dict
+
+@node("get_items")
+def get_items() -> List[str]:
+    return ["a", "b", "c"]
+
+@node("process_strings")
+def process_strings(items: List[str]) -> int:
+    return len(items)
+
+# List[str] -> List[str]: Compatible
+workflow = Sequence(get_items, process_strings)
+
+@node("process_any_list")
+def process_any_list(items: List) -> int:
+    """Generic List without type argument."""
+    return len(items)
+
+# List[str] -> List: Compatible (less specific is OK)
+workflow2 = Sequence(get_items, process_any_list)
+```
+
+### Special Workflow Parameters
+
+Workflow parameters are ignored during type checking:
+
+```python
+from egregore.core.workflow import SharedState
+
+@node("with_state")
+def with_state(data: dict, state: SharedState) -> dict:
+    """State parameter ignored by type checker."""
+    state["count"] = state.get("count", 0) + 1
+    return data
+
+@node("returns_dict")
+def returns_dict() -> dict:
+    return {"data": "value"}
+
+# dict -> dict (state parameter ignored): Compatible
+workflow = Sequence(returns_dict, with_state)
+```
+
+**Ignored parameters**:
+- `state: SharedState`
+- `context: Context`
+- `workflow: Sequence`
+
+## Performance Considerations
+
+### Type Checking Overhead
+
+- **Signature extraction**: ~1ms per node (cached)
+- **Compatibility check**: Less than 0.1ms per chain
+- **Total impact**: Negligible for typical workflows
+
+### Caching
+
+Type signatures are cached automatically:
+
+```python
+# First check extracts and caches signature
+workflow1 = Sequence(node_a, node_b)  # ~1ms overhead
+
+# Subsequent checks use cached signatures
+workflow2 = Sequence(node_a, node_c)  # Less than 0.1ms overhead
+workflow3 = Sequence(node_b, node_c)  # Less than 0.1ms overhead
+```
+
+### Disabling Type Checking
+
+Type checking can be completely disabled if needed:
+
+```python
+# Not currently supported directly, but warning mode is very lightweight
+set_type_checking_mode(strict=False)
+
+# Type checking happens but only logs warnings
+# Overhead: Less than 0.1ms per workflow construction
+```
+
+## Common Patterns
+
+### Type-Safe Data Transformation
+
+```python
+@node("load")
+def load(filename: str) -> dict:
+    """Load data from file."""
+    return {"content": "..."}
+
+@node("validate")
+def validate(data: dict) -> dict:
+    """Validate data structure."""
+    assert "content" in data
+    return data
+
+@node("transform")
+def transform(data: dict) -> List[str]:
+    """Transform to list of items."""
+    return data["content"].split()
+
+@node("filter")
+def filter_items(items: List[str]) -> List[str]:
+    """Filter items."""
+    return [item for item in items if len(item) > 3]
+
+@node("format")
+def format_output(items: List[str]) -> str:
+    """Format final output."""
+    return ", ".join(items)
+
+# Type-safe chain: str -> dict -> dict -> List[str] -> List[str] -> str
+workflow = Sequence(load, validate, transform, filter_items, format_output)
+```
+
+### Gradual Typing
+
+Add types incrementally:
+
+```python
+# Phase 1: No types (works but no type checking)
+@node("process")
+def process(data):
+    return data
+
+# Phase 2: Add return type
+@node("process")
+def process(data) -> dict:
+    return data
+
+# Phase 3: Add parameter types
+@node("process")
+def process(data: dict) -> dict:
+    return data
+
+# Phase 4: Add container type details
+@node("process")
+def process(data: Dict[str, Any]) -> Dict[str, int]:
+    return {k: len(v) for k, v in data.items()}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use strict mode in development">
+    ```python
+    # Good: Catch issues early
+    if ENV == "development":
+        set_type_checking_mode(strict=True)
+
+    # Bad: Always use warning mode
+    set_type_checking_mode(strict=False)  # Miss type issues
+    ```
+  </Accordion>
+
+  <Accordion title="Provide complete type hints">
+    ```python
+    # Good: Complete type information
+    @node("processor")
+    def processor(data: Dict[str, int]) -> List[str]:
+        return [f"{k}: {v}" for k, v in data.items()]
+
+    # Bad: Partial or missing types
+    @node("processor")
+    def processor(data) -> list:  # No input type, generic list
+        return list(data.items())
+    ```
+  </Accordion>
+
+  <Accordion title="Test type compatibility">
+    ```python
+    # Good: Test type chains
+    def test_workflow_type_compatibility():
+        set_type_checking_mode(strict=True)
+        workflow = Sequence(node1, node2, node3)
+        # No TypeError = types are compatible
+
+    # Bad: No type testing
+    def test_workflow():
+        workflow = Sequence(node1, node2, node3)
+        # May have hidden type issues
+    ```
+  </Accordion>
+
+  <Accordion title="Use Optional for nullable returns">
+    ```python
+    # Good: Explicit Optional
+    @node("find")
+    def find(items: List[str]) -> Optional[str]:
+        return items[0] if items else None
+
+    # Bad: Implicit None
+    @node("find")
+    def find(items: List[str]) -> str:
+        return items[0] if items else None  # Type lie!
+    ```
+  </Accordion>
+
+  <Accordion title="Document type assumptions">
+    ```python
+    # Good: Document expectations
+    @node("processor")
+    def processor(data: dict) -> dict:
+        """Process data dictionary.
+
+        Args:
+            data: Must contain 'items' key with list value
+
+        Returns:
+            Processed dictionary with 'count' key
+        """
+        return {"count": len(data["items"])}
+
+    # Bad: No documentation
+    @node("processor")
+    def processor(data: dict) -> dict:
+        return {"count": len(data["items"])}  # What structure?
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Limitations
+
+### Dynamic Types
+
+Type checker cannot validate dynamic runtime behavior:
+
+```python
+@node("dynamic")
+def dynamic(data: dict) -> dict:
+    """Type checker sees dict -> dict."""
+    # But actual structure may vary
+    if "mode" in data:
+        return {"result": "A"}
+    else:
+        return {"value": 123}  # Different structure!
+
+# Type checker approves but runtime may fail
+```
+
+### Complex Generics
+
+Very complex generic types may not be fully validated:
+
+```python
+from typing import Dict, List, Tuple
+
+@node("complex")
+def complex() -> Dict[str, List[Tuple[int, str]]]:
+    """Complex nested generics."""
+    return {"data": [(1, "a"), (2, "b")]}
+
+# Type checker may only verify Dict level, not full nested structure
+```
+
+### Third-Party Types
+
+Custom types from external libraries may not be recognized:
+
+```python
+from some_library import CustomType
+
+@node("custom")
+def custom(data: dict) -> CustomType:
+    return CustomType(data)
+
+# Type checker may treat as Any if it can't analyze CustomType
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Reporting" icon="chart-line" href="/features/workflows/reporting">
+    Track workflow performance
+  </Card>
+
+  <Card title="Best Practices" icon="star" href="/features/workflows/best-practices">
+    Workflow design patterns
+  </Card>
+
+  <Card title="Validation" icon="check-circle" href="/features/workflows/validation">
+    Back to workflow validation
+  </Card>
+
+  <Card title="Creating Nodes" icon="cube" href="/features/workflows/creating-nodes">
+    Back to node creation
+  </Card>
+</CardGroup>

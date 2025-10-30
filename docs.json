@@ -9,8 +9,8 @@
     "dark": "#0F766E"
   },
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "/egregore-light.png",
+    "dark": "/egregore-dark.png"
   },
   "favicon": "/favicon.svg",
   "navbar": {
