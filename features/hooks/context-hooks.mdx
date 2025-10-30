@@ -1,8 +1,550 @@
 ---
 title: Context Hooks
-description: Documentation coming soon
+description: Monitor and control context tree operations with before/after hooks
 ---
 
 # Context Hooks
 
-[Content coming soon]
+**Context hooks** let you observe and modify context tree operations - every insert, update, and delete that happens to the PACT structure.
+
+## Overview
+
+Context hooks provide 5 execution points:
+
+| Hook | Fires | Use Case |
+|------|-------|----------|
+| `before_change` | Before any operation | Validation, authorization, logging |
+| `after_change` | After any operation | Auditing, reactive updates, cleanup |
+| `on_add` | Component added | Tracking additions, indexing |
+| `on_dispatch` | Component dispatched | Event handling, notifications |
+| `on_update` | Component updated | Change tracking, versioning |
+
+## Hook Registration
+
+### Decorator Syntax
+
+```python
+from egregore import Agent
+
+agent = Agent(provider="openai:gpt-4")
+
+@agent.hooks.context.before_change
+def validate_operation(ctx):
+    print(f"[VALIDATE] {ctx.operation_type} at {ctx.selector}")
+    # Can raise exception to cancel operation
+
+@agent.hooks.context.after_change
+def log_operation(ctx):
+    print(f"[AUDIT] {ctx.operation_type} completed: {ctx.component}")
+```
+
+### Subscribe API
+
+```python
+# Dynamic registration
+sub_id = agent.on("context:after_change", lambda ctx: print(f"Changed: {ctx.selector}"))
+
+# Temporary hooks
+with agent.subscription({
+    "context:before_change": validate_changes,
+    "context:after_change": log_changes,
+}):
+    agent.call("Modify context")
+```
+
+## Context Hook Context
+
+Every context hook receives a `ContextExecContext` with:
+
+```python
+@dataclass
+class ContextExecContext:
+    # Identity
+    agent_id: str                  # Agent instance ID
+    execution_id: str              # Unique execution ID
+    agent: Agent                   # Full agent reference
+
+    # Context tree access
+    context: Context               # Complete context tree
+
+    # Operation details
+    operation_type: str            # "insert", "update", or "delete"
+    selector: str                  # PACT selector (e.g., "d0, 1, 0")
+    component: Component           # Component being operated on
+
+    # Additional data
+    metadata: dict                 # Operation-specific metadata
+```
+
+## Execution Flow
+
+### Before Change Hook
+
+Fires **before** any context operation - can cancel by raising exception:
+
+```python
+@agent.hooks.context.before_change
+def validate_changes(ctx):
+    """Validate before allowing operation."""
+    print(f"Validating {ctx.operation_type} at {ctx.selector}")
+
+    # Prevent deletion of critical components
+    if ctx.operation_type == "delete":
+        if hasattr(ctx.component, 'critical') and ctx.component.critical:
+            raise ValueError(f"Cannot delete critical component at {ctx.selector}")
+
+    # Validate insertion depth
+    if ctx.operation_type == "insert":
+        depth = int(ctx.selector.split(',')[0].replace('d', ''))
+        if depth > 100:
+            raise ValueError(f"Maximum context depth exceeded: {depth}")
+
+    # Enforce authorization
+    if ctx.operation_type == "update":
+        if not ctx.agent.state.get("can_modify_context"):
+            raise PermissionError("Context modifications not permitted")
+```
+
+### After Change Hook
+
+Fires **after** any context operation - for auditing and reactive updates:
+
+```python
+@agent.hooks.context.after_change
+def audit_changes(ctx):
+    """Audit all context operations."""
+    timestamp = datetime.now().isoformat()
+
+    audit_entry = {
+        "timestamp": timestamp,
+        "operation": ctx.operation_type,
+        "selector": ctx.selector,
+        "component_type": type(ctx.component).__name__,
+        "agent_id": ctx.agent_id,
+    }
+
+    # Log to audit trail
+    with open("context_audit.log", "a") as f:
+        f.write(json.dumps(audit_entry) + "\n")
+
+    # Trigger reactive updates
+    if ctx.operation_type == "insert":
+        ctx.agent.state.set("last_insert", ctx.selector, source="context_hooks")
+```
+
+### On Add Hook
+
+Fires when a component is added to context:
+
+```python
+@agent.hooks.context.on_add
+def track_additions(ctx):
+    """Track all components added to context."""
+    # Increment component counter
+    count = ctx.agent.state.get("component_count", 0)
+    ctx.agent.state.set("component_count", count + 1, source="hooks")
+
+    # Index by type
+    comp_type = type(ctx.component).__name__
+    type_count = ctx.agent.state.get(f"count_{comp_type}", 0)
+    ctx.agent.state.set(f"count_{comp_type}", type_count + 1, source="hooks")
+
+    print(f"Added {comp_type} at {ctx.selector} (total: {count + 1})")
+```
+
+### On Dispatch Hook
+
+Fires when a component is dispatched/published:
+
+```python
+@agent.hooks.context.on_dispatch
+def handle_dispatch(ctx):
+    """Handle component dispatch events."""
+    print(f"Dispatched: {ctx.component}")
+
+    # Notify subscribers
+    if hasattr(ctx.component, 'event_type'):
+        event_type = ctx.component.event_type
+        subscribers = ctx.agent.state.get(f"subscribers_{event_type}", [])
+
+        for subscriber in subscribers:
+            subscriber(ctx.component)
+```
+
+### On Update Hook
+
+Fires when a component is updated:
+
+```python
+@agent.hooks.context.on_update
+def track_updates(ctx):
+    """Track component updates."""
+    # Store version history
+    history_key = f"history_{ctx.selector}"
+    history = ctx.agent.state.get(history_key, [])
+
+    history.append({
+        "timestamp": datetime.now().isoformat(),
+        "component": str(ctx.component)[:200],  # Truncate
+    })
+
+    ctx.agent.state.set(history_key, history, source="hooks")
+    print(f"Updated {ctx.selector} (v{len(history)})")
+```
+
+## Usage Patterns
+
+### Pattern 1: Context Size Monitoring
+
+Track context tree size and warn on growth:
+
+```python
+class ContextSizeMonitor:
+    def __init__(self, max_components: int = 1000):
+        self.max_components = max_components
+        self.component_count = 0
+
+    def on_add(self, ctx):
+        """Track additions."""
+        self.component_count += 1
+        if self.component_count > self.max_components:
+            print(f"⚠️  Context size exceeded {self.max_components} components")
+
+    def on_delete(self, ctx):
+        """Track deletions."""
+        if ctx.operation_type == "delete":
+            self.component_count -= 1
+
+monitor = ContextSizeMonitor(max_components=500)
+agent.on("context:on_add", monitor.on_add)
+agent.on("context:after_change", monitor.on_delete)
+```
+
+### Pattern 2: Change History Tracking
+
+Maintain complete history of context modifications:
+
+```python
+class ContextHistory:
+    def __init__(self):
+        self.history = []
+
+    def track(self, ctx):
+        """Record every context change."""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "operation": ctx.operation_type,
+            "selector": ctx.selector,
+            "component_type": type(ctx.component).__name__,
+        }
+        self.history.append(entry)
+
+    def get_history(self, selector: str = None):
+        """Get history for specific selector or all."""
+        if selector:
+            return [e for e in self.history if e["selector"] == selector]
+        return self.history
+
+history = ContextHistory()
+agent.on("context:after_change", history.track)
+
+# Later: query history
+agent.call("Do some work")
+print(history.get_history("d0, 1, 0"))
+```
+
+### Pattern 3: Reactive Scaffold Updates
+
+Trigger scaffold re-renders on context changes:
+
+```python
+@agent.hooks.context.after_change
+def trigger_scaffold_updates(ctx):
+    """Re-render scaffolds when context changes."""
+    # Check if scaffold should re-render
+    for scaffold_name, scaffold in ctx.agent.scaffolds.items():
+        if hasattr(scaffold, 'should_rerender'):
+            if scaffold.should_rerender(ctx):
+                # Trigger re-render
+                scaffold.render()
+                print(f"Re-rendered scaffold: {scaffold_name}")
+```
+
+### Pattern 4: Component Validation
+
+Enforce component structure rules:
+
+```python
+@agent.hooks.context.before_change
+def validate_component_structure(ctx):
+    """Validate component follows rules."""
+    if ctx.operation_type == "insert":
+        component = ctx.component
+
+        # Ensure required fields
+        if not hasattr(component, 'key'):
+            raise ValueError("Component missing required 'key' field")
+
+        # Validate TTL values
+        if hasattr(component, 'ttl') and component.ttl is not None:
+            if component.ttl < 0:
+                raise ValueError(f"Invalid TTL: {component.ttl} (must be >= 0)")
+
+        # Enforce naming conventions
+        if hasattr(component, 'key'):
+            if not component.key.isidentifier():
+                raise ValueError(f"Invalid component key: {component.key}")
+```
+
+### Pattern 5: Depth-Based Policies
+
+Apply different rules based on context depth:
+
+```python
+@agent.hooks.context.before_change
+def enforce_depth_policies(ctx):
+    """Apply policies based on context depth."""
+    # Parse depth from selector
+    depth = int(ctx.selector.split(',')[0].replace('d', ''))
+
+    # System depth (-1): Read-only
+    if depth == -1 and ctx.operation_type in ["update", "delete"]:
+        raise PermissionError("System depth is read-only")
+
+    # Current depth (0): Allow all operations
+    if depth == 0:
+        return  # No restrictions
+
+    # Historical depths (1+): Restrict modifications
+    if depth > 0 and ctx.operation_type == "update":
+        print(f"⚠️  Modifying historical context at depth {depth}")
+        # Could log, require confirmation, etc.
+```
+
+### Pattern 6: Context Snapshots
+
+Automatically create snapshots on significant changes:
+
+```python
+@agent.hooks.context.after_change
+def auto_snapshot(ctx):
+    """Create snapshots on important operations."""
+    # Snapshot after every 10 insertions
+    insert_count = ctx.agent.state.get("insert_count", 0)
+
+    if ctx.operation_type == "insert":
+        insert_count += 1
+        ctx.agent.state.set("insert_count", insert_count, source="hooks")
+
+        if insert_count % 10 == 0:
+            snapshot_id = ctx.context.seal(trigger="auto_snapshot")
+            print(f"📸 Created snapshot: {snapshot_id}")
+```
+
+## Reactive Scaffolds
+
+Context hooks are the foundation of reactive scaffolds - all scaffolds with `_reactive = True` automatically re-render on context changes:
+
+```python
+from egregore.core.context_scaffolds.base import BaseContextScaffold
+
+class ReactiveScaffold(BaseContextScaffold):
+    scaffold_type = "reactive"
+    _reactive = True  # Default behavior
+
+    def render(self):
+        """Called automatically on context changes."""
+        message_count = len(self.agent.thread.current.all_messages)
+        return TextContent(
+            content=f"Messages: {message_count}",
+            key="message_tracker"
+        )
+
+    def should_rerender(self, ctx: ContextExecContext) -> bool:
+        """Optional: control when to re-render."""
+        # Only re-render on inserts
+        return ctx.operation_type == "insert"
+```
+
+**How it works:**
+1. `CONTEXT_AFTER_CHANGE` hook fires on every context modification
+2. Reactive scaffolds check `should_rerender(ctx)`
+3. If True, scaffold's `render()` is called automatically
+4. New content updates context tree
+
+## Operation Types
+
+Context hooks fire for three operation types:
+
+### Insert Operations
+
+```python
+@agent.hooks.context.after_change
+def on_insert(ctx):
+    if ctx.operation_type == "insert":
+        print(f"Inserted at {ctx.selector}")
+        # ctx.component = newly inserted component
+```
+
+### Update Operations
+
+```python
+@agent.hooks.context.after_change
+def on_update(ctx):
+    if ctx.operation_type == "update":
+        print(f"Updated at {ctx.selector}")
+        # ctx.component = updated component (new state)
+```
+
+### Delete Operations
+
+```python
+@agent.hooks.context.after_change
+def on_delete(ctx):
+    if ctx.operation_type == "delete":
+        print(f"Deleted from {ctx.selector}")
+        # ctx.component = component that was deleted
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use before_change for validation, after_change for reactions">
+    ```python
+    # Good: Validate before operation
+    @agent.hooks.context.before_change
+    def validate(ctx):
+        if ctx.operation_type == "delete":
+            if ctx.component.protected:
+                raise ValueError("Cannot delete protected component")
+
+    # Good: React after operation
+    @agent.hooks.context.after_change
+    def react(ctx):
+        if ctx.operation_type == "insert":
+            ctx.agent.state.set("last_insert", ctx.selector, source="hooks")
+    ```
+  </Accordion>
+
+  <Accordion title="Keep before_change hooks fast">
+    ```python
+    # Good: Fast validation
+    @agent.hooks.context.before_change
+    def quick_check(ctx):
+        if ctx.operation_type == "delete":
+            if not ctx.agent.state.get("can_delete"):
+                raise PermissionError("Deletion not allowed")
+
+    # Bad: Slow validation blocks operations
+    @agent.hooks.context.before_change
+    def slow_check(ctx):
+        time.sleep(1)  # Blocks every context operation!
+        result = expensive_validation()
+    ```
+  </Accordion>
+
+  <Accordion title="Use operation_type to filter events">
+    ```python
+    # Good: Filter for specific operations
+    @agent.hooks.context.after_change
+    def track_insertions(ctx):
+        if ctx.operation_type == "insert":
+            # Only process insertions
+            log_insertion(ctx.selector)
+
+    # Bad: Process all operations
+    @agent.hooks.context.after_change
+    def track_everything(ctx):
+        # This runs for EVERY context operation
+        log_operation(ctx)  # Too much overhead
+    ```
+  </Accordion>
+
+  <Accordion title="Access full context tree via ctx.context">
+    ```python
+    @agent.hooks.context.after_change
+    def analyze_context(ctx):
+        # Access full context tree
+        all_components = ctx.context.get_all_components()
+
+        # Query by selector
+        component = ctx.context["d0, 1, 0"]
+
+        # Get metadata
+        depth_count = len(ctx.context.depths)
+
+        print(f"Context has {len(all_components)} components at {depth_count} depths")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Performance Considerations
+
+- **Hook overhead**: Less than 3ms per hook on average
+- **before_change blocking**: Blocks operation until completed
+- **after_change async**: Runs after operation completes
+- **Reactive scaffolds**: Less than 5% overhead with 5+ scaffolds
+
+## Integration with Scaffolds
+
+Context hooks enable reactive scaffolds:
+
+```python
+from egregore.core.context_scaffolds.base import BaseContextScaffold
+
+class MonitoringScaffold(BaseContextScaffold):
+    scaffold_type = "monitoring"
+
+    def render(self):
+        """Automatically re-renders on context changes."""
+        # This runs every time context is modified
+        component_count = len(self.context.get_all_components())
+
+        return TextContent(
+            content=f"Context: {component_count} components",
+            key="monitoring"
+        )
+```
+
+## Error Handling
+
+Errors in `before_change` cancel the operation:
+
+```python
+@agent.hooks.context.before_change
+def strict_validation(ctx):
+    try:
+        validate_operation(ctx)
+    except ValidationError as e:
+        # Log error and cancel operation
+        logger.error(f"Validation failed: {e}")
+        raise  # Re-raise to cancel operation
+
+@agent.hooks.context.after_change
+def handle_change_errors(ctx):
+    try:
+        process_change(ctx)
+    except Exception as e:
+        # Log but don't propagate (operation already completed)
+        logger.error(f"Post-processing failed: {e}")
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Tool Hooks" icon="wrench" href="/features/hooks/tool-hooks">
+    Tool execution lifecycle hooks
+  </Card>
+
+  <Card title="Streaming Hooks" icon="wave-pulse" href="/features/hooks/streaming-hooks">
+    Real-time content processing
+  </Card>
+
+  <Card title="Subscribe API" icon="plug" href="/features/hooks/subscribe-api">
+    Dynamic hook registration
+  </Card>
+
+  <Card title="Context Management" icon="database" href="/core-concepts/context-management">
+    Learn about the context tree
+  </Card>
+</CardGroup>

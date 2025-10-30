@@ -1,8 +1,520 @@
 ---
 title: Creating Scaffolds
-description: Documentation coming soon
+description: Step-by-step guide to building custom scaffolds with state, operations, and reactive rendering
 ---
 
 # Creating Scaffolds
 
-[Content coming soon]
+Learn how to build custom scaffolds that extend your agent with persistent memory, tools, and reactive capabilities.
+
+## Basic Scaffold Structure
+
+Every scaffold inherits from `BaseContextScaffold`:
+
+```python
+from egregore.core.context_scaffolds.base import BaseContextScaffold
+from egregore.core.context_management.pact.components import TextContent
+from pydantic import BaseModel
+
+class MyScaffold(BaseContextScaffold):
+    scaffold_type = "my_scaffold"  # Unique identifier
+
+    def render(self):
+        """Render scaffold into context."""
+        return TextContent(
+            content="Hello from scaffold",
+            key="my_scaffold_content"
+        )
+```
+
+**Minimum requirements:**
+- Inherit from `BaseContextScaffold`
+- Set unique `scaffold_type`
+- Implement `render()` method
+
+## Adding State
+
+Use Pydantic models for type-safe state:
+
+```python
+class CounterState(BaseModel):
+    count: int = 0
+    history: list[int] = []
+
+class CounterScaffold(BaseContextScaffold):
+    scaffold_type = "counter"
+    state_model = CounterState  # Define state schema
+
+    def render(self):
+        return TextContent(
+            content=f"Count: {self.state.count}",
+            key="counter_display"
+        )
+
+# Usage
+agent = Agent(provider="openai:gpt-4", scaffolds=[CounterScaffold])
+scaffold = agent.scaffolds["counter"]
+scaffold.state.count = 5
+print(scaffold.state.count)  # 5
+```
+
+## Adding Operations
+
+Expose methods as agent tools with `@operation`:
+
+```python
+from egregore.core.context_scaffolds.base import operation
+
+class CounterScaffold(BaseContextScaffold):
+    scaffold_type = "counter"
+    state_model = CounterState
+
+    @operation
+    def increment(self) -> str:
+        """Increment the counter."""
+        self.state.count += 1
+        self.state.history.append(self.state.count)
+        return f"Counter: {self.state.count}"
+
+    @operation
+    def decrement(self) -> str:
+        """Decrement the counter."""
+        self.state.count -= 1
+        self.state.history.append(self.state.count)
+        return f"Counter: {self.state.count}"
+
+    @operation
+    def reset(self) -> str:
+        """Reset counter to zero."""
+        self.state.count = 0
+        self.state.history.clear()
+        return "Counter reset"
+
+    def render(self):
+        return TextContent(
+            content=f"Count: {self.state.count} (History: {len(self.state.history)})",
+            key="counter"
+        )
+
+# Agent can use operations
+agent = Agent(provider="openai:gpt-4", scaffolds=[CounterScaffold])
+agent.call("Increment the counter")
+agent.call("Increment again")
+agent.call("What's the count?")  # "Count: 2"
+```
+
+## Complete Example: Todo Scaffold
+
+```python
+from pydantic import BaseModel, Field
+from datetime import datetime
+
+class TodoState(BaseModel):
+    todos: list[dict] = []
+    next_id: int = 1
+
+class TodoScaffold(BaseContextScaffold):
+    scaffold_type = "todos"
+    state_model = TodoState
+
+    @operation
+    def add_todo(self, title: str, priority: str = "medium") -> str:
+        """Add a new todo item."""
+        todo = {
+            "id": self.state.next_id,
+            "title": title,
+            "priority": priority,
+            "completed": False,
+            "created_at": datetime.now().isoformat()
+        }
+        self.state.todos.append(todo)
+        self.state.next_id += 1
+        return f"Added todo #{todo['id']}: {title}"
+
+    @operation
+    def complete_todo(self, todo_id: int) -> str:
+        """Mark a todo as completed."""
+        for todo in self.state.todos:
+            if todo["id"] == todo_id:
+                todo["completed"] = True
+                return f"Completed: {todo['title']}"
+        return f"Todo #{todo_id} not found"
+
+    @operation
+    def list_todos(self, show_completed: bool = False) -> str:
+        """List all todos."""
+        todos = [
+            t for t in self.state.todos
+            if show_completed or not t["completed"]
+        ]
+
+        if not todos:
+            return "No todos"
+
+        lines = []
+        for todo in todos:
+            status = "✓" if todo["completed"] else "○"
+            lines.append(f"{status} #{todo['id']}: {todo['title']} [{todo['priority']}]")
+
+        return "\n".join(lines)
+
+    def render(self):
+        pending = [t for t in self.state.todos if not t["completed"]]
+        completed = [t for t in self.state.todos if t["completed"]]
+
+        return TextContent(
+            content=f"Todos: {len(pending)} pending, {len(completed)} completed",
+            key="todo_summary"
+        )
+
+# Usage
+agent = Agent(provider="openai:gpt-4", scaffolds=[TodoScaffold])
+
+agent.call("Add todo: write documentation with high priority")
+agent.call("Add todo: review code")
+agent.call("Complete todo 1")
+agent.call("List my todos")
+```
+
+## Reactive Rendering
+
+Scaffolds re-render automatically on context changes:
+
+```python
+class ReactiveScaffold(BaseContextScaffold):
+    scaffold_type = "reactive"
+    _reactive = True  # Default
+
+    def render(self):
+        """Called automatically when context changes."""
+        message_count = len(self.agent.thread.current.all_messages)
+        return TextContent(
+            content=f"Messages: {message_count}",
+            key="message_tracker"
+        )
+
+    def should_rerender(self, ctx: ContextExecContext) -> bool:
+        """Optional: control when to re-render."""
+        # Only re-render on inserts
+        return ctx.operation_type == "insert"
+
+# Disable reactivity
+class NonReactiveScaffold(BaseContextScaffold):
+    scaffold_type = "non_reactive"
+    _reactive = False  # Explicit opt-out
+```
+
+## Initialization and Setup
+
+Override `__init__` for custom setup:
+
+```python
+class DatabaseScaffold(BaseContextScaffold):
+    scaffold_type = "database"
+
+    def __init__(self, agent):
+        super().__init__(agent)
+        # Custom initialization
+        self.connection = self.setup_connection()
+        self.cache = {}
+
+    def setup_connection(self):
+        """Setup database connection."""
+        return DatabaseConnection(host="localhost")
+
+    def __del__(self):
+        """Cleanup on deletion."""
+        if hasattr(self, 'connection'):
+            self.connection.close()
+```
+
+## Accessing Agent Properties
+
+Scaffolds have full access to the agent:
+
+```python
+class AnalyzerScaffold(BaseContextScaffold):
+    scaffold_type = "analyzer"
+
+    def render(self):
+        # Access context
+        episode = self.agent.context.current_episode
+
+        # Access provider
+        provider_name = self.agent.provider.name
+
+        # Access thread
+        messages = len(self.agent.thread.current.all_messages)
+
+        # Access usage
+        tokens = self.agent.usage.total_tokens
+
+        # Access other scaffolds
+        notes = self.agent.scaffolds.get("notes")
+        note_count = len(notes.state.notes) if notes else 0
+
+        return TextContent(
+            content=f"Episode {episode} | {messages} msgs | {tokens} tokens | {note_count} notes",
+            key="analysis"
+        )
+```
+
+## TTL and Component Lifecycle
+
+Control when scaffold content expires:
+
+```python
+class AlertScaffold(BaseContextScaffold):
+    scaffold_type = "alerts"
+
+    def render(self):
+        # Temporary alert (expires after 3 turns)
+        return TextContent(
+            content="⚠️ Important reminder",
+            key="alert",
+            ttl=3
+        )
+
+class StickyScaffold(BaseContextScaffold):
+    scaffold_type = "sticky"
+
+    def render(self):
+        # Sticky component (re-renders each turn)
+        return TextContent(
+            content=f"Episode: {self.agent.context.current_episode}",
+            key="episode_tracker",
+            ttl=1,
+            cadence=1  # Sticky behavior
+        )
+```
+
+## Error Handling
+
+Graceful error handling in operations:
+
+```python
+class SafeScaffold(BaseContextScaffold):
+    scaffold_type = "safe"
+
+    @operation
+    def risky_operation(self, value: int) -> str:
+        """Operation that might fail."""
+        try:
+            result = 100 / value
+            return f"Result: {result}"
+        except ZeroDivisionError:
+            return "Error: Cannot divide by zero"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def render(self):
+        try:
+            data = self.compute_data()
+            return TextContent(content=data, key="safe_data")
+        except Exception as e:
+            # Fallback rendering
+            return TextContent(
+                content=f"Error in rendering: {str(e)}",
+                key="error_message"
+            )
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use descriptive operation docstrings">
+    Operations become tools - docstrings are shown to the agent:
+
+    ```python
+    @operation
+    def search_items(self, query: str, limit: int = 10) -> str:
+        """
+        Search for items matching the query.
+
+        Args:
+            query: Search term to match against item names
+            limit: Maximum number of results (default: 10)
+
+        Returns:
+            Formatted list of matching items
+        """
+        # Implementation
+    ```
+  </Accordion>
+
+  <Accordion title="Validate state changes">
+    Use Pydantic validators:
+
+    ```python
+    from pydantic import validator
+
+    class ValidatedState(BaseModel):
+        count: int = 0
+
+        @validator('count')
+        def count_must_be_positive(cls, v):
+            if v < 0:
+                raise ValueError('count must be positive')
+            return v
+    ```
+  </Accordion>
+
+  <Accordion title="Keep render() fast">
+    Avoid expensive operations in render:
+
+    ```python
+    # Good: Fast rendering
+    def render(self):
+        return TextContent(
+            content=f"Count: {self.state.count}",
+            key="counter"
+        )
+
+    # Bad: Slow rendering
+    def render(self):
+        # Expensive operation blocks rendering
+        result = self.expensive_analysis()
+        return TextContent(content=result, key="analysis")
+    ```
+  </Accordion>
+
+  <Accordion title="Use state models for complex data">
+    Nested Pydantic models for structure:
+
+    ```python
+    class Item(BaseModel):
+        id: int
+        name: str
+        metadata: dict
+
+    class InventoryState(BaseModel):
+        items: list[Item] = []
+        categories: dict[str, list[int]] = {}
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Testing Scaffolds
+
+```python
+def test_counter_scaffold():
+    # Create agent with scaffold
+    agent = Agent(provider="openai:gpt-4", scaffolds=[CounterScaffold])
+
+    # Get scaffold instance
+    counter = agent.scaffolds["counter"]
+
+    # Test state
+    assert counter.state.count == 0
+
+    # Test operations
+    result = counter.increment()
+    assert counter.state.count == 1
+    assert "1" in result
+
+    # Test rendering
+    component = counter.render()
+    assert component is not None
+    assert "1" in component.content
+
+def test_scaffold_with_agent():
+    agent = Agent(provider="openai:gpt-4", scaffolds=[CounterScaffold])
+
+    # Test through agent calls
+    response = agent.call("Increment the counter")
+    assert "1" in response
+
+    # Verify state changed
+    counter = agent.scaffolds["counter"]
+    assert counter.state.count == 1
+```
+
+## Advanced Patterns
+
+### State Synchronization
+
+```python
+class SyncScaffold(BaseContextScaffold):
+    scaffold_type = "sync"
+
+    def render(self):
+        # Sync with external system
+        self.sync_from_external()
+
+        return TextContent(
+            content=f"Synced: {len(self.state.items)} items",
+            key="sync_status"
+        )
+
+    def sync_from_external(self):
+        """Sync state from external source."""
+        # Fetch from database, API, etc.
+        external_data = fetch_external_data()
+        self.state.items = external_data
+```
+
+### Conditional Rendering
+
+```python
+class ConditionalScaffold(BaseContextScaffold):
+    scaffold_type = "conditional"
+
+    def render(self):
+        # Only render when condition met
+        if not self.should_render():
+            return None
+
+        return TextContent(
+            content="Condition met!",
+            key="conditional_content"
+        )
+
+    def should_render(self) -> bool:
+        """Check if should render."""
+        return self.agent.context.current_episode > 10
+```
+
+### Multi-Component Rendering
+
+```python
+class MultiScaffold(BaseContextScaffold):
+    scaffold_type = "multi"
+
+    def render(self):
+        """Return list of components."""
+        components = []
+
+        # Summary component
+        components.append(TextContent(
+            content=f"Status: Active",
+            key="status"
+        ))
+
+        # Details component
+        components.append(TextContent(
+            content=f"Details: {self.get_details()}",
+            key="details"
+        ))
+
+        return components  # List of components
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Scaffold IPC" icon="share-nodes" href="/features/scaffolds/scaffold-ipc">
+    Learn scaffold communication patterns
+  </Card>
+
+  <Card title="Built-in Scaffolds" icon="layer-group" href="/features/scaffolds/builtin-scaffolds">
+    Explore InternalNotes, FileManager, Shell
+  </Card>
+
+  <Card title="Operation Decorator" icon="screwdriver-wrench" href="/api-reference/scaffolds/operation-decorator">
+    Complete @operation documentation
+  </Card>
+
+  <Card title="Scaffolds API" icon="code" href="/api-reference/scaffolds/base-scaffold">
+    Full BaseContextScaffold API reference
+  </Card>
+</CardGroup>

@@ -1,8 +1,164 @@
 ---
 title: Hooks Overview
-description: Documentation coming soon
+description: Lifecycle event handlers for agent observability and modification
 ---
 
 # Hooks Overview
 
-[Content coming soon]
+**Hooks** are decorator-based lifecycle handlers that let you observe and modify agent behavior at key execution points.
+
+## Hook Categories
+
+Egregore provides 5 hook categories:
+
+| Category | Purpose | Example |
+|----------|---------|---------|
+| **Tool** | Tool execution lifecycle | Log tool calls, modify results |
+| **Context** | Context tree operations | Validate changes, audit operations |
+| **Streaming** | Real-time response streaming | Process chunks, filter content |
+| **Message** | Message handling | Modify user/provider messages |
+| **Scaffold** | Scaffold state changes | Track scaffold updates |
+
+## Basic Usage
+
+```python
+from egregore import Agent
+
+agent = Agent(provider="openai:gpt-4")
+
+@agent.hooks.tool.pre_call
+def log_tool(ctx):
+    print(f"Calling tool: {ctx.tool_name}")
+
+@agent.hooks.tool.post_call
+def log_result(ctx):
+    print(f"Result: {ctx.tool_result}")
+
+# Hooks fire automatically
+agent.call("Use the calculator tool")
+# Output: "Calling tool: calculator"
+# Output: "Result: 42"
+```
+
+## Hook Registration
+
+Use decorators directly on agent instance:
+
+```python
+# Tool hooks
+@agent.hooks.tool.pre_call
+@agent.hooks.tool.post_call
+@agent.hooks.tool.on_error
+
+# Context hooks
+@agent.hooks.context.before_change
+@agent.hooks.context.after_change
+
+# Streaming hooks
+@agent.hooks.streaming.on_chunk
+
+# Message hooks
+@agent.hooks.message.on_user_msg
+@agent.hooks.message.on_provider_msg
+
+# Scaffold hooks
+@agent.hooks.scaffold.on_state_change
+```
+
+## Hook Context Objects
+
+Every hook receives a context object with relevant data:
+
+```python
+@agent.hooks.tool.pre_call
+def my_hook(ctx: ToolExecContext):
+    # Common fields
+    ctx.agent          # Agent instance
+    ctx.context        # Context tree
+
+    # Tool-specific fields
+    ctx.tool_name      # Tool being called
+    ctx.tool_args      # Tool arguments
+    ctx.tool_kwargs    # Tool keyword arguments
+```
+
+## Common Use Cases
+
+### Logging and Monitoring
+
+```python
+@agent.hooks.tool.pre_call
+def log_tool_usage(ctx):
+    print(f"[TOOL] {ctx.tool_name} called with {ctx.tool_args}")
+
+@agent.hooks.context.after_change
+def log_context_changes(ctx):
+    print(f"[CONTEXT] {ctx.operation_type} at {ctx.selector}")
+```
+
+### Error Handling
+
+```python
+@agent.hooks.tool.on_error
+def handle_tool_error(ctx):
+    print(f"Tool {ctx.tool_name} failed: {ctx.error}")
+    # Log to monitoring service
+    monitor.log_error(ctx.tool_name, ctx.error)
+```
+
+### Content Filtering
+
+```python
+@agent.hooks.streaming.on_chunk
+def filter_sensitive_data(ctx):
+    # Remove sensitive patterns
+    filtered = ctx.chunk_data.replace("SECRET", "[REDACTED]")
+    return filtered, True  # (content, was_modified)
+```
+
+### Validation
+
+```python
+@agent.hooks.context.before_change
+def validate_changes(ctx):
+    if ctx.operation_type == "delete" and ctx.component.critical:
+        raise ValueError("Cannot delete critical component")
+```
+
+## Hook Execution Order
+
+Multiple hooks execute in registration order:
+
+```python
+@agent.hooks.tool.pre_call
+def first_hook(ctx):
+    print("1")
+
+@agent.hooks.tool.pre_call
+def second_hook(ctx):
+    print("2")
+
+agent.call("Use tool")
+# Output: "1"
+# Output: "2"
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Tool Hooks" icon="wrench" href="/features/hooks/tool-hooks">
+    Tool execution lifecycle
+  </Card>
+
+  <Card title="Context Hooks" icon="database" href="/features/hooks/context-hooks">
+    Context tree operations
+  </Card>
+
+  <Card title="Streaming Hooks" icon="wave-pulse" href="/features/hooks/streaming-hooks">
+    Real-time content processing
+  </Card>
+
+  <Card title="Message Hooks" icon="envelope" href="/features/hooks/message-hooks">
+    Message handling and modification
+  </Card>
+</CardGroup>

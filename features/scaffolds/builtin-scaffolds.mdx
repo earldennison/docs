@@ -1,8 +1,191 @@
 ---
 title: Built-in Scaffolds
-description: Documentation coming soon
+description: Complete guide to InternalNotes, FileManager, and ShellScaffold
 ---
 
 # Built-in Scaffolds
 
-[Content coming soon]
+Egregore includes three production-ready scaffolds for common agent capabilities.
+
+## InternalNotesScaffold
+
+Automatic note-taking and memory system.
+
+### Features
+
+- **Automatic capture**: Remembers user preferences, facts, and instructions
+- **Persistent storage**: Notes survive across sessions
+- **Search and retrieval**: Query notes by content or category
+- **Organization**: Categorize notes by topic
+
+### Usage
+
+```python
+agent = Agent(provider="openai:gpt-4", enable_scaffolds=True)
+
+# Agent automatically captures notes
+agent.call("My email is alice@example.com")
+agent.call("I prefer dark mode")
+agent.call("Remember: I work in Python")
+
+# Access notes
+notes_scaffold = agent.scaffolds["notes"]
+print(notes_scaffold.state.notes)
+# ["Email: alice@example.com", "Preference: dark mode", "Language: Python"]
+
+# Agent recalls automatically
+agent.call("What's my email?")
+# "Your email is alice@example.com"
+```
+
+### Operations
+
+```python
+# Add note manually
+notes_scaffold.add_note("Important: project deadline March 15")
+
+# Search notes
+results = notes_scaffold.search_notes("email")
+# ["Email: alice@example.com"]
+
+# Clear notes
+notes_scaffold.clear_notes()
+```
+
+### State Structure
+
+```python
+class NotesState(BaseModel):
+    notes: list[str] = []
+    categories: dict[str, list[str]] = {}
+    last_updated: datetime = None
+```
+
+## FileManager
+
+Track file operations and maintain file system context.
+
+### Features
+
+- **Operation tracking**: Monitors read, write, delete operations
+- **Working directory**: Tracks current directory
+- **File history**: Maintains recent file access log
+- **Relationship mapping**: Understands file dependencies
+
+### Usage
+
+```python
+agent = Agent(provider="openai:gpt-4", enable_scaffolds=True)
+
+# Scaffold tracks file operations automatically
+agent.call("Read config.json")
+agent.call("Write output to results.txt")
+
+# Access file history
+files = agent.scaffolds["files"]
+print(files.state.recent_files)
+# ["config.json", "results.txt"]
+
+# Working directory awareness
+print(files.state.working_directory)
+# "/home/user/project"
+```
+
+### Operations
+
+```python
+# Track file operation
+files.track_file_operation("read", "data.csv")
+
+# Get recent files
+recent = files.get_recent_files(limit=10)
+
+# Clear history
+files.clear_history()
+```
+
+### State Structure
+
+```python
+class FileManagerState(BaseModel):
+    recent_files: list[str] = []
+    working_directory: str = "."
+    file_operations: list[dict] = []
+```
+
+## ShellScaffold
+
+Command execution history and environment tracking.
+
+### Features
+
+- **Command history**: Tracks executed commands
+- **Exit codes**: Monitors success/failure
+- **Environment tracking**: Current directory, environment variables
+- **Output capture**: Stores command output
+
+### Usage
+
+```python
+agent = Agent(provider="openai:gpt-4", enable_scaffolds=True)
+
+# Scaffold tracks commands
+agent.call("Run: npm install")
+agent.call("Execute: pytest tests/")
+
+# Access history
+shell = agent.scaffolds["shell"]
+print(shell.state.command_history)
+# [("npm install", 0), ("pytest tests/", 0)]
+
+# Check last command
+last_cmd, exit_code = shell.state.command_history[-1]
+print(f"Last: {last_cmd}, Exit: {exit_code}")
+```
+
+### Operations
+
+```python
+# Track command
+shell.track_command("git status", exit_code=0)
+
+# Get command history
+history = shell.get_command_history(limit=20)
+
+# Clear history
+shell.clear_history()
+```
+
+### State Structure
+
+```python
+class ShellState(BaseModel):
+    command_history: list[tuple[str, int]] = []
+    working_directory: str = "."
+    environment: dict[str, str] = {}
+```
+
+## Disabling Built-in Scaffolds
+
+```python
+# Disable all built-in scaffolds
+agent = Agent(provider="openai:gpt-4", enable_scaffolds=False)
+
+# Selective enabling with custom scaffolds
+agent = Agent(
+    provider="openai:gpt-4",
+    scaffolds=[MyCustomScaffold]  # Only custom scaffolds
+)
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Creating Scaffolds" icon="hammer" href="/features/scaffolds/creating-scaffolds">
+    Build your own custom scaffolds
+  </Card>
+
+  <Card title="Scaffold IPC" icon="share-nodes" href="/features/scaffolds/scaffold-ipc">
+    Learn scaffold communication
+  </Card>
+</CardGroup>
